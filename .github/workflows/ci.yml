@@ -40,14 +40,14 @@ jobs:
         with:
           context: .
           load: true
-          tags: sast:ci
+          tags: dast:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
       - name: Smoke test
         run: |
-          docker run -d --name smoke -p 8080:8080 sast:ci
+          docker run -d --name smoke -p 8080:8080 dast:ci
           for _ in $(seq 1 30); do curl -sf localhost:8080/readyz && break; sleep 1; done
-          curl -sf localhost:8080/api/v1/version | grep -q '"product":"sast"'
-          curl -sf localhost:8080/metrics | grep -q 'openasy_build_info{product="sast"'
+          curl -sf localhost:8080/api/v1/version | grep -q '"product":"dast"'
+          curl -sf localhost:8080/metrics | grep -q 'openasy_build_info{product="dast"'
           docker logs smoke
