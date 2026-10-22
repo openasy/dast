@@ -1,0 +1,1912 @@
+{
+  "openapi": "3.1.1",
+  "info": {
+    "title": "OpenAsy DAST API",
+    "version": "0.1.0",
+    "summary": "Findings from scans of running applications, on targets whose owner has proven they own them.",
+    "description": "Every screen of dast uses this API, and so can your scripts and CI (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nSend SARIF 2.1.0 reports from ZAP, Nuclei or another scanner with `DAST_INGEST_TOKEN`. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).",
+    "license": {
+      "name": "AGPL-3.0-only",
+      "identifier": "AGPL-3.0-only"
+    }
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "This dast"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Scans",
+      "description": "Reports from scanners, compared with what the same engine found before."
+    },
+    {
+      "name": "Targets",
+      "description": "What may be tested, and proof that its owner agreed."
+    },
+    {
+      "name": "Findings",
+      "description": "What the scanners found, and the decisions about it."
+    },
+    {
+      "name": "Product",
+      "description": "Version and overview of this dast."
+    }
+  ],
+  "paths": {
+    "/api/v1/scans": {
+      "post": {
+        "operationId": "sendScan",
+        "tags": [
+          "Scans"
+        ],
+        "summary": "Send a report",
+        "security": [
+          {
+            "ingestToken": []
+          },
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Takes a SARIF 2.1.0 report from ZAP, Nuclei or another scanner of running applications, for a target that exists. Findings outside the target's address are left out. What the same engine reported before and does not report now is fixed. The first report of an engine adopts what is there; later ones fail the check for new findings at or above the target's `failOn`.\n\n```bash\nnuclei -u https://shop.example.com -se results.sarif\ncurl -sf -X POST -H \"Authorization: Bearer $DAST_INGEST_TOKEN\" -H 'content-type: application/json' --data-binary @results.sarif \\\n  \"https://dast.example.com/api/v1/scans?target=shop-staging\" | tee scan.json\ntest \"$(jq .passed scan.json)\" = true\n```\n\nThe body may be gzipped (`Content-Encoding: gzip`), up to 64 MiB unpacked, with at most 20,000 results.\n\nTakes DAST_INGEST_TOKEN, or an API token with the editor role.",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": true,
+            "description": "The target's name.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "query",
+            "required": false,
+            "description": "Which engine made the report. Without it, the first word of the tool's name in lowercase, such as `zap` or `nuclei`. Reports of one engine replace each other; engines do not fix each other's findings.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "A SARIF 2.1.0 log."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Compared with what the engine reported before. `passed` says whether the check passes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewScan"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/scans/{id}": {
+      "get": {
+        "operationId": "getScan",
+        "tags": [
+          "Scans"
+        ],
+        "summary": "Get a report",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The scan's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The report's counts.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Scan"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/targets": {
+      "get": {
+        "operationId": "listTargets",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "List targets",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Targets by name.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TargetList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "post": {
+        "operationId": "createTarget",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "Add a target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "An address that may be tested. Nothing is attacked until its owner has proven it is theirs (ADR 0037).\n\nNeeds the admin role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTarget"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created, not yet verified. Serve `verification.content` at `verification.url`, then ask for verification.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      }
+    },
+    "/api/v1/targets/{id}": {
+      "get": {
+        "operationId": "getTarget",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "Get a target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The target.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      },
+      "patch": {
+        "operationId": "updateTarget",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "Change a target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Marks it as production, which never gets a full scan without an admin's say, and sets the severity that fails a check.\n\nNeeds the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateTarget"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The target.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      },
+      "delete": {
+        "operationId": "deleteTarget",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "Delete a target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Deletes its reports, findings and decisions.\n\nNeeds the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Deleted."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      }
+    },
+    "/api/v1/targets/{id}/verify": {
+      "post": {
+        "operationId": "verifyTarget",
+        "tags": [
+          "Targets"
+        ],
+        "summary": "Verify a target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Fetches `/.well-known/openasy-dast` from the target's origin over the public internet, without following redirects, and compares it with the verification content. Addresses on private networks are refused: an agent in that network verifies them.\n\nNeeds the admin role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Verified; asking again changes nothing.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Target"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "admin"
+      }
+    },
+    "/api/v1/targets/{id}/scans": {
+      "get": {
+        "operationId": "listTargetScans",
+        "tags": [
+          "Scans"
+        ],
+        "summary": "List a target's reports",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Newest first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ScanList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/targets/{id}/findings": {
+      "get": {
+        "operationId": "listTargetFindings",
+        "tags": [
+          "Findings"
+        ],
+        "summary": "List a target's findings",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "`open` (default): reported by its engine and not triaged. `suppressed`: triaged and still reported. `resolved`: no longer reported.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "suppressed",
+                "resolved"
+              ],
+              "default": "open"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated severities, such as `critical,high`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Matches the rule, address or message.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Most severe first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/targets/{id}/findings/{fingerprint}": {
+      "put": {
+        "operationId": "triageFinding",
+        "tags": [
+          "Findings"
+        ],
+        "summary": "Triage a finding",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Marks a finding as a false positive or accepted risk, with a reason, or opens it again. The decision stays with the finding across reports.\n\nNeeds the editor role.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "fingerprint",
+            "in": "path",
+            "required": true,
+            "description": "From a finding or a report.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewTriage"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The finding with its decision.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Finding"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "editor"
+      }
+    },
+    "/api/v1/findings": {
+      "get": {
+        "operationId": "listFindings",
+        "tags": [
+          "Findings"
+        ],
+        "summary": "List findings of every target",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "description": "Only this target's id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "description": "`open` (default): reported by its engine and not triaged. `suppressed`: triaged and still reported. `resolved`: no longer reported.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "open",
+                "suppressed",
+                "resolved"
+              ],
+              "default": "open"
+            }
+          },
+          {
+            "name": "severity",
+            "in": "query",
+            "required": false,
+            "description": "Comma-separated severities, such as `critical,high`.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "description": "Matches the rule, address or message.",
+            "schema": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "description": "Page size.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 100
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "required": false,
+            "description": "The previous page's nextCursor.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Most severe first.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FindingList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/summary": {
+      "get": {
+        "operationId": "getSummary",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Overview",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "Counts for the whole install.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Summary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/version": {
+      "get": {
+        "operationId": "getVersion",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Version",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The running version.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Version"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/products": {
+      "get": {
+        "operationId": "listProducts",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Other products of this install",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "From OPENASY_PRODUCTS, for the product switcher.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "liveness",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Liveness",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "The process is running.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "operationId": "readiness",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Readiness",
+        "description": "Ready while the database answers.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Ready to serve.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The database is unavailable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Status"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "operationId": "metrics",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Prometheus metrics",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Metrics in the Prometheus text format.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "session": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "__Host-openasy-session",
+        "description": "The browser session after signing in (`openasy-session` when dast runs on plain http://localhost). Requests that change something must come from the dast origin."
+      },
+      "apiToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "An API token created under Settings \u2192 API tokens (`oa_dast_...`): one role, always an expiry (ADR 0003)."
+      },
+      "adminToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Only when dast is started by its tests or a local script: one shared token with the admin role. A production install does not have it."
+      },
+      "ingestToken": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "`DAST_INGEST_TOKEN`: for CI. It can send scans, nothing else."
+      }
+    },
+    "responses": {
+      "Problem": {
+        "description": "An error, as RFC 9457 Problem Details.",
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Problem": {
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "status",
+          "code"
+        ],
+        "properties": {
+          "type": {
+            "type": "string",
+            "format": "uri"
+          },
+          "title": {
+            "type": "string"
+          },
+          "status": {
+            "type": "integer"
+          },
+          "code": {
+            "type": "string",
+            "enum": [
+              "invalid-token",
+              "invalid-json",
+              "invalid-body",
+              "invalid-sarif",
+              "verification-failed",
+              "conflict",
+              "not-found",
+              "not-configured",
+              "payload-too-large",
+              "internal-error",
+              "unauthenticated",
+              "invalid-credentials",
+              "mfa-required",
+              "mfa-setup-required",
+              "forbidden",
+              "cross-site",
+              "rate-limited"
+            ],
+            "description": "Stable; match on this."
+          },
+          "detail": {
+            "type": "string"
+          }
+        }
+      },
+      "Severity": {
+        "type": "string",
+        "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ]
+      },
+      "FailOn": {
+        "type": "string",
+        "enum": [
+          "critical",
+          "high",
+          "medium",
+          "low",
+          "none"
+        ],
+        "description": "The lowest severity of a new finding that fails the check; `none` never fails it."
+      },
+      "Counts": {
+        "type": "object",
+        "required": [
+          "critical",
+          "high",
+          "medium",
+          "low"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "critical": {
+            "type": "integer"
+          },
+          "high": {
+            "type": "integer"
+          },
+          "medium": {
+            "type": "integer"
+          },
+          "low": {
+            "type": "integer"
+          }
+        }
+      },
+      "ProductLink": {
+        "type": "object",
+        "required": [
+          "id",
+          "url"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "The product, as OpenAsy names it.",
+            "examples": [
+              "infrastructure"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "The address people open it at.",
+            "examples": [
+              "https://infra.example.com"
+            ]
+          }
+        }
+      },
+      "ProductList": {
+        "type": "object",
+        "required": [
+          "products"
+        ],
+        "properties": {
+          "products": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProductLink"
+            }
+          }
+        }
+      },
+      "Status": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string"
+          }
+        }
+      },
+      "TriageState": {
+        "type": "object",
+        "required": [
+          "state",
+          "reason",
+          "by",
+          "at",
+          "expiresAt",
+          "active"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "false-positive",
+              "accepted"
+            ]
+          },
+          "reason": {
+            "type": "string"
+          },
+          "by": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "at": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          },
+          "expiresAt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          },
+          "active": {
+            "type": "boolean",
+            "description": "False once the acceptance has expired; the finding is open again."
+          }
+        }
+      },
+      "NewTriage": {
+        "type": "object",
+        "required": [
+          "state"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "state": {
+            "type": "string",
+            "enum": [
+              "open",
+              "false-positive",
+              "accepted"
+            ],
+            "description": "`open` clears an earlier decision."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 3,
+            "maxLength": 500,
+            "description": "Required for false-positive and accepted."
+          },
+          "expiresAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Required for accepted, at most 366 days away; optional for a false positive."
+          }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "required": [
+          "product",
+          "version"
+        ],
+        "properties": {
+          "product": {
+            "const": "dast"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "Summary": {
+        "type": "object",
+        "required": [
+          "targets",
+          "verified",
+          "open",
+          "suppressed",
+          "failingChecks",
+          "lastScanAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "targets": {
+            "type": "integer"
+          },
+          "verified": {
+            "type": "integer",
+            "description": "Targets whose owner has proven the address is theirs."
+          },
+          "open": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "suppressed": {
+            "type": "integer"
+          },
+          "failingChecks": {
+            "type": "integer",
+            "description": "Reports of the last 7 days that failed their check."
+          },
+          "lastScanAt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          }
+        }
+      },
+      "Target": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "url",
+          "production",
+          "failOn",
+          "verified",
+          "verifiedAt",
+          "verification",
+          "open",
+          "suppressed",
+          "lastScan",
+          "createdAt"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Origin and path; findings outside it are left out."
+          },
+          "production": {
+            "type": "boolean"
+          },
+          "failOn": {
+            "$ref": "#/components/schemas/FailOn"
+          },
+          "verified": {
+            "type": "boolean"
+          },
+          "verifiedAt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          },
+          "verification": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "method",
+                  "url",
+                  "content"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "method": {
+                    "const": "file"
+                  },
+                  "url": {
+                    "type": "string",
+                    "format": "uri"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "Serve exactly this text at url, then ask for verification."
+                  }
+                }
+              }
+            ],
+            "description": "Null once verified."
+          },
+          "open": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "suppressed": {
+            "type": "integer"
+          },
+          "lastScan": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "required": [
+                  "at",
+                  "engine",
+                  "new",
+                  "passed"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "at": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "engine": {
+                    "type": "string"
+                  },
+                  "new": {
+                    "type": "integer"
+                  },
+                  "passed": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "TargetList": {
+        "type": "object",
+        "required": [
+          "targets"
+        ],
+        "properties": {
+          "targets": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Target"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass the previous page's nextCursor to get the next page."
+          }
+        }
+      },
+      "NewTarget": {
+        "type": "object",
+        "required": [
+          "name",
+          "url"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "production": {
+            "type": "boolean",
+            "default": false
+          },
+          "failOn": {
+            "$ref": "#/components/schemas/FailOn",
+            "default": "high"
+          }
+        }
+      },
+      "UpdateTarget": {
+        "type": "object",
+        "additionalProperties": false,
+        "minProperties": 1,
+        "properties": {
+          "production": {
+            "type": "boolean"
+          },
+          "failOn": {
+            "$ref": "#/components/schemas/FailOn"
+          }
+        }
+      },
+      "Finding": {
+        "type": "object",
+        "required": [
+          "target",
+          "fingerprint",
+          "engine",
+          "rule",
+          "severity",
+          "url",
+          "param",
+          "message",
+          "evidence",
+          "firstSeen",
+          "lastSeen",
+          "resolvedAt",
+          "triage"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "target": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "fingerprint": {
+            "type": "string",
+            "description": "The same on every scan: rule, page without query string, parameter."
+          },
+          "engine": {
+            "type": "string"
+          },
+          "rule": {
+            "type": "string"
+          },
+          "severity": {
+            "$ref": "#/components/schemas/Severity"
+          },
+          "url": {
+            "type": "string"
+          },
+          "param": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "message": {
+            "type": "string"
+          },
+          "evidence": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "What the engine saw, with credentials masked."
+          },
+          "firstSeen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "lastSeen": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "resolvedAt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ]
+          },
+          "triage": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/TriageState"
+              }
+            ]
+          }
+        }
+      },
+      "FindingList": {
+        "type": "object",
+        "required": [
+          "findings"
+        ],
+        "properties": {
+          "findings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass the previous page's nextCursor to get the next page."
+          }
+        }
+      },
+      "Scan": {
+        "type": "object",
+        "required": [
+          "id",
+          "target",
+          "engine",
+          "tool",
+          "total",
+          "new",
+          "resolved",
+          "suppressed",
+          "ignored",
+          "blocking",
+          "failOn",
+          "passed",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "required": [
+              "id",
+              "name"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "engine": {
+            "type": "string"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "total": {
+            "type": "integer",
+            "description": "Findings inside the target's address."
+          },
+          "new": {
+            "type": "integer",
+            "description": "Findings the engine did not report before and nobody has triaged."
+          },
+          "resolved": {
+            "type": "integer",
+            "description": "Findings this engine reported before and does not now."
+          },
+          "suppressed": {
+            "type": "integer",
+            "description": "New findings someone had triaged."
+          },
+          "ignored": {
+            "type": "integer",
+            "description": "Results outside the target's address, or without a web address."
+          },
+          "blocking": {
+            "type": "integer",
+            "description": "New findings at or above failOn. Always 0 for the first report of an engine, which adopts what is there."
+          },
+          "failOn": {
+            "$ref": "#/components/schemas/FailOn"
+          },
+          "passed": {
+            "type": "boolean"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "NewScan": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/Scan"
+          },
+          {
+            "type": "object",
+            "required": [
+              "findings"
+            ],
+            "properties": {
+              "findings": {
+                "type": "array",
+                "maxItems": 100,
+                "description": "The new findings, most severe first, up to 100.",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "fingerprint",
+                    "rule",
+                    "severity",
+                    "url",
+                    "param",
+                    "message"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "fingerprint": {
+                      "type": "string"
+                    },
+                    "rule": {
+                      "type": "string"
+                    },
+                    "severity": {
+                      "$ref": "#/components/schemas/Severity"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "param": {
+                      "oneOf": [
+                        {
+                          "type": "null"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "message": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        ]
+      },
+      "ScanList": {
+        "type": "object",
+        "required": [
+          "scans"
+        ],
+        "properties": {
+          "scans": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Scan"
+            }
+          },
+          "nextCursor": {
+            "type": "string",
+            "description": "Pass the previous page's nextCursor to get the next page."
+          }
+        }
+      }
+    }
+  }
+}
