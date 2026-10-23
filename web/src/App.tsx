@@ -284,7 +284,7 @@ function FindingsTable({
       width: "30%",
       cell: (f) => (
         <span className="flex min-w-0 flex-col">
-          <button type="button" className="dast-wrap self-start text-left font-mono text-xs font-medium text-fg hover:underline">
+          <button type="button" onClick={() => setOpen(f)} className="dast-wrap self-start text-left font-mono text-xs font-medium text-fg hover:underline">
             {f.rule}
           </button>
           <span className="dast-clamp text-xs text-fg-muted" title={f.message}>
