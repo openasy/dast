@@ -25,22 +25,13 @@ import {
   type Column,
   type ProductId,
   useThemePreference,
+  useAgo,
 } from "@openasy/ui";
 import { AccountSettings, AuthGate, MembersSettings, SignInSettings, TokensSettings, useAuth } from "@openasy/auth/react";
 import { Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Plus, Settings2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, MfaSetupRequired, Unauthorized, type FailOn, type Finding, type ProductLink, type Scan, type Severity, type Summary, type Target } from "./api.ts";
-
-function ago(iso: string | null | undefined): string {
-  if (!iso) return "never";
-  const s = Math.round((Date.now() - Date.parse(iso)) / 1000);
-  if (s < 60) return "just now";
-  if (s < 3600) return `${Math.round(s / 60)} min ago`;
-  if (s < 86_400) return `${Math.round(s / 3600)} h ago`;
-  return `${Math.round(s / 86_400)} d ago`;
-}
-
-const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+import { useT, type T } from "./i18n.ts";
 
 const PAGES = ["targets", "setup", "account", "members", "signin", "tokens"] as const;
 type Route = { page: "findings" | (typeof PAGES)[number] } | { page: "target"; id: string };
@@ -72,18 +63,19 @@ function useApi() {
 type Call = ReturnType<typeof useApi>;
 
 const SEVERITIES: Severity[] = ["critical", "high", "medium", "low"];
-const FAIL_ON: Array<{ value: FailOn; label: string }> = [
-  { value: "critical", label: "Critical" },
-  { value: "high", label: "High or worse" },
-  { value: "medium", label: "Medium or worse" },
-  { value: "low", label: "Any finding" },
-  { value: "none", label: "Never fail" },
-];
+const FAIL_ON = (t: T): Array<{ value: FailOn; label: string }> => ([
+  { value: "critical", label: t("failOn.critical") },
+  { value: "high", label: t("failOn.highOrWorse") },
+  { value: "medium", label: t("failOn.mediumOrWorse") },
+  { value: "low", label: t("failOn.anyFinding") },
+  { value: "none", label: t("failOn.neverFail") },
+]);
 
 /** Compact severity counts; each badge carries the full name for screen readers. */
 function SevCounts({ counts }: { counts: Record<Severity, number> }) {
+  const t = useT();
   const shown = SEVERITIES.filter((s) => counts[s] > 0);
-  if (!shown.length) return <span className="text-xs text-fg-muted">None</span>;
+  if (!shown.length) return <span className="text-xs text-fg-muted">{t("sevCounts.none")}</span>;
   return (
     <span className="flex flex-wrap gap-1">
       {shown.map((s) => (
@@ -101,6 +93,8 @@ function Code({ children }: { children: ReactNode }) {
 }
 
 function FindingPanel({ finding, call, onClose, onChanged }: { finding: Finding; call: Call; onClose: () => void; onChanged: () => void }) {
+  const ago = useAgo();
+  const msg = useT();
   const { can } = useAuth();
   const [deciding, setDeciding] = useState(false);
   const [state, setState] = useState<"false-positive" | "accepted">("false-positive");
@@ -125,11 +119,11 @@ function FindingPanel({ finding, call, onClose, onChanged }: { finding: Finding;
 
   return (
     <Panel
-      aria-label={`${finding.rule} details`}
+      aria-label={msg("findingPanel.details", { rule: finding.rule })}
       title={<span className="dast-wrap font-mono text-sm">{finding.rule}</span>}
       description={`${finding.target.name} · ${finding.engine}`}
       actions={
-        <IconButton label="Close details" size="sm" onClick={onClose}>
+        <IconButton label={msg("findingPanel.closeDetails")} size="sm" onClick={onClose}>
           <X />
         </IconButton>
       }
@@ -145,24 +139,24 @@ function FindingPanel({ finding, call, onClose, onChanged }: { finding: Finding;
         {t && (
           <div className="flex flex-col gap-1 rounded-md border border-line p-2.5 text-xs">
             <span>
-              <StatusBadge tone={t.active ? "success" : "neutral"}>{t.state === "false-positive" ? "False positive" : t.active ? "Accepted risk" : "Acceptance expired"}</StatusBadge>
+              <StatusBadge tone={t.active ? "success" : "neutral"}>{t.state === "false-positive" ? msg("findingPanel.falsePositive") : t.active ? msg("findingPanel.acceptedRisk") : msg("findingPanel.acceptanceExpired")}</StatusBadge>
             </span>
             <span>{t.reason}</span>
             <span className="text-fg-muted">
               {t.by ? `${t.by}, ` : ""}
               {ago(t.at)}
-              {t.expiresAt ? `, until ${new Date(t.expiresAt).toLocaleDateString()}` : ""}
+              {t.expiresAt ? msg("findingPanel.until", { value: new Date(t.expiresAt).toLocaleDateString() }) : ""}
             </span>
           </div>
         )}
         {can("editor") && (
           <div className="flex gap-2 border-t border-line pt-3">
             <Button size="sm" icon={<CircleSlash />} onClick={() => setDeciding(true)}>
-              {t ? "Change decision" : "Triage"}
+              {t ? msg("findingPanel.changeDecision") : msg("findingPanel.triage")}
             </Button>
             {t && (
               <Button size="sm" onClick={() => void reopen()}>
-                Open again
+                {msg("findingPanel.openAgain")}
               </Button>
             )}
           </div>
@@ -170,40 +164,40 @@ function FindingPanel({ finding, call, onClose, onChanged }: { finding: Finding;
         <Dialog
           open={deciding}
           onOpenChange={(open) => !open && close()}
-          title={`Triage ${finding.rule}`}
-          description="The decision stays with this finding across scans, so it does not fail the next check. Say why, for the next review."
+          title={msg("findingPanel.triage2", { rule: finding.rule })}
+          description={msg("findingPanel.theDecisionStaysWithThis")}
           onSubmit={decide}
           footer={
             <>
               <Button type="button" onClick={close}>
-                Cancel
+                {msg("findingPanel.cancel")}
               </Button>
               <Button type="submit" variant="primary" disabled={reason.trim().length < 3}>
-                Save decision
+                {msg("findingPanel.saveDecision")}
               </Button>
             </>
           }
         >
           <SelectField
-            label="Decision"
+            label={msg("findingPanel.decision")}
             value={state}
             onChange={(e) => setState(e.target.value as typeof state)}
             options={[
-              { value: "false-positive", label: "False positive" },
-              { value: "accepted", label: "Accepted risk" },
+              { value: "false-positive", label: msg("findingPanel.falsePositive") },
+              { value: "accepted", label: msg("findingPanel.acceptedRisk") },
             ]}
           />
-          <TextField label="Reason" value={reason} onChange={(e) => setReason(e.target.value)} hint="Why, for the next review." error={error} />
+          <TextField label={msg("findingPanel.reason")} value={reason} onChange={(e) => setReason(e.target.value)} hint={msg("findingPanel.whyForTheNextReview")} error={error} />
           {state === "accepted" && (
             <SelectField
-              label="For"
+              label={msg("findingPanel.for")}
               value={days}
               onChange={(e) => setDays(e.target.value)}
               options={[
-                { value: "30", label: "30 days" },
-                { value: "90", label: "90 days" },
-                { value: "180", label: "180 days" },
-                { value: "365", label: "1 year" },
+                { value: "30", label: msg("findingPanel.n30Days") },
+                { value: "90", label: msg("findingPanel.n90Days") },
+                { value: "180", label: msg("findingPanel.n180Days") },
+                { value: "365", label: msg("findingPanel.n1Year") },
               ]}
             />
           )}
@@ -217,6 +211,8 @@ type Tab = "open" | "suppressed" | "resolved";
 
 /** Findings of every target, or of one when targetId is given. */
 function FindingsTable({ call, targetId, summary, reload }: { call: Call; targetId?: string; summary?: { open: Record<Severity, number> }; reload: () => void }) {
+  const ago = useAgo();
+  const t = useT();
   const [tab, setTab] = useState<Tab>("open");
   const [sev, setSev] = useState<string[]>([]);
   const [q, setQ] = useState("");
@@ -242,10 +238,10 @@ function FindingsTable({ call, targetId, summary, reload }: { call: Call; target
   const loadMore = () => more && query(more).then((r) => (setRows((x) => [...(x ?? []), ...r.findings]), setMore(r.nextCursor)));
 
   const columns: Column<Finding>[] = [
-    { id: "sev", header: "Severity", width: "104px", cell: (f) => <SeverityBadge severity={f.severity} /> },
+    { id: "sev", header: t("findingsTable.severity"), width: "104px", cell: (f) => <SeverityBadge severity={f.severity} /> },
     {
       id: "rule",
-      header: "Rule",
+      header: t("findingsTable.rule"),
       width: "30%",
       cell: (f) => (
         <span className="flex min-w-0 flex-col">
@@ -260,7 +256,7 @@ function FindingsTable({ call, targetId, summary, reload }: { call: Call; target
     },
     {
       id: "where",
-      header: "Where",
+      header: t("findingsTable.where"),
       width: "32%",
       cell: (f) => (
         <span className="dast-wrap font-mono text-xs">
@@ -269,42 +265,42 @@ function FindingsTable({ call, targetId, summary, reload }: { call: Call; target
         </span>
       ),
     },
-    { id: "engine", header: "Engine", cell: (f) => <Badge>{f.engine}</Badge> },
-    ...(targetId ? [] : [{ id: "target", header: "Target", cell: (f: Finding) => <span className="text-xs">{f.target.name}</span> } satisfies Column<Finding>]),
-    { id: "seen", header: "First seen", sortValue: (f) => f.firstSeen, cell: (f) => <span className="text-xs whitespace-nowrap">{ago(f.firstSeen)}</span> },
+    { id: "engine", header: t("findingsTable.engine"), cell: (f) => <Badge>{f.engine}</Badge> },
+    ...(targetId ? [] : [{ id: "target", header: t("findingsTable.target"), cell: (f: Finding) => <span className="text-xs">{f.target.name}</span> } satisfies Column<Finding>]),
+    { id: "seen", header: t("findingsTable.firstSeen"), sortValue: (f) => f.firstSeen, cell: (f) => <span className="text-xs whitespace-nowrap">{ago(f.firstSeen)}</span> },
   ];
 
   return (
     <>
       <Tabs<Tab>
-        label="Finding views"
+        label={t("findingsTable.findingViews")}
         value={tab}
         onChange={setTab}
         items={[
-          { value: "open", label: "Open" },
-          { value: "suppressed", label: "Triaged" },
-          { value: "resolved", label: "Fixed" },
+          { value: "open", label: t("findingsTable.open") },
+          { value: "suppressed", label: t("findingsTable.triaged") },
+          { value: "resolved", label: t("findingsTable.fixed") },
         ]}
       />
       <FilterBar onClear={() => (setSev([]), setQ(""))}>
-        <FacetFilter label="Severity" selected={sev} onChange={setSev} options={SEVERITIES.map((s) => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1), count: tab === "open" ? summary?.open[s] : undefined }))} />
-        <SearchInput label="Search rule, address or message" className="w-64" value={q} onChange={(e) => setQ(e.target.value)} />
+        <FacetFilter label={t("findingsTable.severity")} selected={sev} onChange={setSev} options={SEVERITIES.map((s) => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1), count: tab === "open" ? summary?.open[s] : undefined }))} />
+        <SearchInput label={t("findingsTable.searchRuleAddressOrMessage")} className="w-64" value={q} onChange={(e) => setQ(e.target.value)} />
       </FilterBar>
       <div className={open ? "grid gap-2.5 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]" : "grid gap-2.5"}>
         <Panel
-          title={tab === "open" ? "Open" : tab === "suppressed" ? "False positives and accepted risk" : "Fixed"}
-          description="What the scanners found on running applications, most severe first"
+          title={tab === "open" ? t("findingsTable.open") : tab === "suppressed" ? t("findingsTable.falsePositivesAndAcceptedRisk") : t("findingsTable.fixed")}
+          description={t("findingsTable.whatTheScannersFoundOn")}
           flush
           footer={
             more ? (
               <Button size="sm" onClick={loadMore}>
-                Load more
+                {t("findingsTable.loadMore")}
               </Button>
             ) : undefined
           }
         >
           <DataTable
-            label="Findings"
+            label={t("findingsTable.findings")}
             columns={columns}
             rows={rows ?? []}
             loading={!rows}
@@ -314,13 +310,13 @@ function FindingsTable({ call, targetId, summary, reload }: { call: Call; target
             minWidth={900}
             pageSize={50}
             empty={
-              <EmptyState title={tab === "open" ? "No open findings" : tab === "suppressed" ? "Nothing triaged" : "Nothing fixed yet"}>
+              <EmptyState title={tab === "open" ? t("findingsTable.noOpenFindings") : tab === "suppressed" ? t("findingsTable.nothingTriaged") : t("findingsTable.nothingFixedYet")}>
                 {tab === "open" && summary && !Object.values(summary.open).some(Boolean) ? (
                   <>
-                    Send a scan report to see findings. See <a href="/setup">Setup</a>.
+                    {t("findingsTable.sendAScanReportTo")}{" "}<a href="/setup">{t("findingsTable.setup")}</a>.
                   </>
                 ) : (
-                  "Nothing matches these filters."
+                  t("findingsTable.nothingMatchesTheseFilters")
                 )}
               </EmptyState>
             }
@@ -344,18 +340,20 @@ function FindingsTable({ call, targetId, summary, reload }: { call: Call; target
 }
 
 function FindingsPage({ call, summary, reload }: { call: Call; summary?: Summary; reload: () => void }) {
+  const ago = useAgo();
+  const t = useT();
   const s = summary;
   return (
     <>
-      <PageHeader title="Findings" description={s ? `${plural(s.targets, "target")}, ${s.verified} verified · last report ${ago(s.lastScanAt)}` : undefined} />
+      <PageHeader title={t("findingsPage.findings")} description={s ? t("findingsPage.verifiedLastReport", { plural: t("plurals.target", { count: s.targets }), verified: s.verified, ago: ago(s.lastScanAt) }) : undefined} />
       {s && (
         <KpiGrid minWidth={150}>
-          <KpiCard label="Critical" value={s.open.critical} footer={<SeverityBadge severity="critical" />} />
-          <KpiCard label="High" value={s.open.high} footer={<SeverityBadge severity="high" />} />
-          <KpiCard label="Medium" value={s.open.medium} footer={<SeverityBadge severity="medium" />} />
-          <KpiCard label="Low" value={s.open.low} footer={<SeverityBadge severity="low" />} />
-          <KpiCard label="Failed checks, 7 days" value={s.failingChecks} tone={s.failingChecks ? "warning" : "success"} />
-          <KpiCard label="Triaged" value={s.suppressed} tone="info" />
+          <KpiCard label={t("findingsPage.critical")} value={s.open.critical} footer={<SeverityBadge severity="critical" />} />
+          <KpiCard label={t("findingsPage.high")} value={s.open.high} footer={<SeverityBadge severity="high" />} />
+          <KpiCard label={t("findingsPage.medium")} value={s.open.medium} footer={<SeverityBadge severity="medium" />} />
+          <KpiCard label={t("findingsPage.low")} value={s.open.low} footer={<SeverityBadge severity="low" />} />
+          <KpiCard label={t("findingsPage.failedChecks7Days")} value={s.failingChecks} tone={s.failingChecks ? "warning" : "success"} />
+          <KpiCard label={t("findingsPage.triaged")} value={s.suppressed} tone="info" />
         </KpiGrid>
       )}
       <FindingsTable call={call} summary={s} reload={reload} />
@@ -364,14 +362,17 @@ function FindingsPage({ call, summary, reload }: { call: Call; summary?: Summary
 }
 
 function CheckStatus({ passed }: { passed: boolean }) {
-  return passed ? <StatusBadge tone="success">Passed</StatusBadge> : <StatusBadge tone="danger">Failed</StatusBadge>;
+  const t = useT();
+  return passed ? <StatusBadge tone="success">{t("checkStatus.passed")}</StatusBadge> : <StatusBadge tone="danger">{t("checkStatus.failed")}</StatusBadge>;
 }
 
 function VerifiedBadge({ t }: { t: Pick<Target, "verified"> }) {
-  return t.verified ? <StatusBadge tone="success">Verified</StatusBadge> : <StatusBadge tone="warning">Not verified</StatusBadge>;
+  const msg = useT();
+  return t.verified ? <StatusBadge tone="success">{msg("verifiedBadge.verified")}</StatusBadge> : <StatusBadge tone="warning">{msg("verifiedBadge.notVerified")}</StatusBadge>;
 }
 
 function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
+  const msg = useT();
   const { can } = useAuth();
   const [rows, setRows] = useState<Target[]>();
   const [adding, setAdding] = useState(false);
@@ -398,7 +399,7 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
   const columns: Column<Target>[] = [
     {
       id: "name",
-      header: "Target",
+      header: msg("targetsPage.target"),
       width: "24%",
       sortValue: (t) => t.name,
       cell: (t) => (
@@ -407,36 +408,36 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
         </a>
       ),
     },
-    { id: "url", header: "Address", cell: (t) => <span className="dast-wrap font-mono text-xs">{t.url}</span> },
-    { id: "verified", header: "Ownership", cell: (t) => <VerifiedBadge t={t} /> },
-    { id: "env", header: "Environment", cell: (t) => (t.production ? <Badge tone="warning">Production</Badge> : <Badge>Not production</Badge>) },
-    { id: "open", header: "Open", cell: (t) => <SevCounts counts={t.open} /> },
-    { id: "check", header: "Check", cell: (t) => (t.lastScan ? <CheckStatus passed={t.lastScan.passed} /> : "–") },
+    { id: "url", header: msg("targetsPage.address"), cell: (t) => <span className="dast-wrap font-mono text-xs">{t.url}</span> },
+    { id: "verified", header: msg("targetsPage.ownership"), cell: (t) => <VerifiedBadge t={t} /> },
+    { id: "env", header: msg("targetsPage.environment"), cell: (t) => (t.production ? <Badge tone="warning">{msg("targetsPage.production")}</Badge> : <Badge>{msg("targetsPage.notProduction")}</Badge>) },
+    { id: "open", header: msg("targetsPage.open"), cell: (t) => <SevCounts counts={t.open} /> },
+    { id: "check", header: msg("targetsPage.check"), cell: (t) => (t.lastScan ? <CheckStatus passed={t.lastScan.passed} /> : "–") },
   ];
   return (
     <>
       <PageHeader
-        title="Targets"
-        description="An address that may be tested. Nothing is attacked until its owner has proven it is theirs."
+        title={msg("targetsPage.targets")}
+        description={msg("targetsPage.anAddressThatMayBe")}
         actions={
           can("admin") && (
             <Button variant="primary" icon={<Plus />} onClick={() => setAdding(true)}>
-              Add target
+              {msg("targetsPage.addTarget")}
             </Button>
           )
         }
       />
       <Panel flush>
         <DataTable
-          label="Targets"
+          label={msg("targetsPage.targets")}
           columns={columns}
           rows={rows ?? []}
           loading={!rows}
           getRowId={(t) => t.id}
           minWidth={900}
           empty={
-            <EmptyState title="No targets yet">
-              {can("admin") ? "Add the address of an application you own." : "An admin adds the addresses that may be tested."}
+            <EmptyState title={msg("targetsPage.noTargetsYet")}>
+              {can("admin") ? msg("targetsPage.addTheAddressOfAn") : msg("targetsPage.anAdminAddsTheAddresses")}
             </EmptyState>
           }
         />
@@ -444,29 +445,29 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
       <Dialog
         open={adding}
         onOpenChange={(open) => !open && close()}
-        title="Add a target"
-        description="You prove the address is yours next, by serving a short text from it."
+        title={msg("targetsPage.addATarget")}
+        description={msg("targetsPage.youProveTheAddressIs")}
         onSubmit={add}
         footer={
           <>
             <Button type="button" onClick={close}>
-              Cancel
+              {msg("targetsPage.cancel")}
             </Button>
             <Button type="submit" variant="primary" disabled={!name.trim() || !address.trim()}>
-              Add target
+              {msg("targetsPage.addTarget")}
             </Button>
           </>
         }
       >
-        <TextField label="Name" value={name} onChange={(e) => setName(e.target.value)} hint="Letters, digits, . _ and -. CI sends reports by this name." />
-        <TextField label="Address" value={address} onChange={(e) => setAddress(e.target.value)} hint="https://shop.example.com, or with a path to test only a part of it." error={error} />
+        <TextField label={msg("targetsPage.name")} value={name} onChange={(e) => setName(e.target.value)} hint={msg("targetsPage.lettersDigitsAndCiSends")} />
+        <TextField label={msg("targetsPage.address")} value={address} onChange={(e) => setAddress(e.target.value)} hint="https://shop.example.com, or with a path to test only a part of it." error={error} />
         <SelectField
-          label="Is it production?"
+          label={msg("targetsPage.isItProduction")}
           value={production}
           onChange={(e) => setProduction(e.target.value)}
           options={[
-            { value: "no", label: "No, staging or test" },
-            { value: "yes", label: "Yes: never given a full scan without an admin's say" },
+            { value: "no", label: msg("targetsPage.noStagingOrTest") },
+            { value: "yes", label: msg("targetsPage.yesNeverGivenAFull") },
           ]}
         />
       </Dialog>
@@ -475,6 +476,8 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
 }
 
 function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () => void }) {
+  const ago = useAgo();
+  const msg = useT();
   const { can } = useAuth();
   const [target, setTarget] = useState<Target | null>();
   const [scans, setScans] = useState<Scan[]>();
@@ -524,32 +527,32 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
 
   if (target === null)
     return (
-      <EmptyState title="Target not found">
-        It may have been deleted. <a href="/targets">Back to targets</a>.
+      <EmptyState title={msg("targetPage.targetNotFound")}>
+        {msg("targetPage.itMayHaveBeenDeleted")}{" "}<a href="/targets">{msg("targetPage.backToTargets")}</a>.
       </EmptyState>
     );
 
   const columns: Column<Scan>[] = [
-    { id: "when", header: "Report", sortValue: (s) => s.createdAt, cell: (s) => <span className="text-xs whitespace-nowrap">{ago(s.createdAt)}</span> },
-    { id: "engine", header: "Engine", cell: (s) => <Badge>{s.engine}</Badge> },
-    { id: "total", header: "Reported", align: "right", cell: (s) => s.total },
-    { id: "new", header: "New", align: "right", cell: (s) => s.new },
-    { id: "fixed", header: "Fixed", align: "right", cell: (s) => s.resolved },
-    { id: "ignored", header: "Left out", align: "right", description: "Results outside the target's address.", cell: (s) => s.ignored },
-    { id: "check", header: "Check", cell: (s) => <CheckStatus passed={s.passed} /> },
+    { id: "when", header: msg("targetPage.report"), sortValue: (s) => s.createdAt, cell: (s) => <span className="text-xs whitespace-nowrap">{ago(s.createdAt)}</span> },
+    { id: "engine", header: msg("targetPage.engine"), cell: (s) => <Badge>{s.engine}</Badge> },
+    { id: "total", header: msg("targetPage.reported"), align: "right", cell: (s) => s.total },
+    { id: "new", header: msg("targetPage.new"), align: "right", cell: (s) => s.new },
+    { id: "fixed", header: msg("targetPage.fixed"), align: "right", cell: (s) => s.resolved },
+    { id: "ignored", header: msg("targetPage.leftOut"), align: "right", description: msg("targetPage.resultsOutsideTheTargetS"), cell: (s) => s.ignored },
+    { id: "check", header: msg("targetPage.check"), cell: (s) => <CheckStatus passed={s.passed} /> },
   ];
   return (
     <>
-      <PageHeader title={target?.name ?? "Target"} description={target ? `${target.url} · ${plural(Object.values(target.open).reduce((a, b) => a + b, 0), "open finding")}` : undefined} actions={target && <VerifiedBadge t={target} />} />
+      <PageHeader title={target?.name ?? msg("targetPage.target")} description={target ? `${target.url} · ${msg("plurals.openFinding", { count: Object.values(target.open).reduce((a, b) => a + b, 0) })}` : undefined} actions={target && <VerifiedBadge t={target} />} />
       {target && !target.verified && target.verification && (
-        <Panel title="Prove the address is yours" description="Serve this text, on its own, at the address below, then ask for verification. Until then only reports are accepted; nothing is attacked.">
+        <Panel title={msg("targetPage.proveTheAddressIsYours")} description={msg("targetPage.serveThisTextOnIts")}>
           <div className="flex flex-col gap-2">
             <span className="dast-wrap font-mono text-xs">{target.verification.url}</span>
             <Code>{target.verification.content}</Code>
             {can("admin") && (
               <div className="flex items-center gap-2">
                 <Button variant="primary" icon={<ShieldCheck />} onClick={() => void verify()} disabled={checking}>
-                  {checking ? "Checking…" : "Verify"}
+                  {checking ? "Checking…" : msg("targetPage.verify")}
                 </Button>
                 {error && <span className="text-xs text-danger">{error}</span>}
               </div>
@@ -558,39 +561,39 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
         </Panel>
       )}
       {can("admin") && target && (
-        <Panel title="Policy" description="What a check treats as a failure. Only findings an engine did not report before, and nobody has triaged, can fail it.">
+        <Panel title={msg("targetPage.policy")} description={msg("targetPage.whatACheckTreatsAs")}>
           <div className="grid gap-2 sm:grid-cols-2">
-            <SelectField label="Fail the check for" value={failOn} onChange={(e) => setFailOn(e.target.value as FailOn)} options={FAIL_ON} />
+            <SelectField label={msg("targetPage.failTheCheckFor")} value={failOn} onChange={(e) => setFailOn(e.target.value as FailOn)} options={FAIL_ON(msg)} />
             <SelectField
-              label="Production"
+              label={msg("targetPage.production")}
               value={production}
               onChange={(e) => setProduction(e.target.value)}
               options={[
-                { value: "no", label: "No, staging or test" },
-                { value: "yes", label: "Yes: no full scans" },
+                { value: "no", label: msg("targetPage.noStagingOrTest") },
+                { value: "yes", label: msg("targetPage.yesNoFullScans") },
               ]}
             />
           </div>
           <div className="mt-3 flex gap-2">
             <Button variant="primary" onClick={() => void save()} disabled={failOn === target.failOn && (production === "yes") === target.production}>
-              Save policy
+              {msg("targetPage.savePolicy")}
             </Button>
             <Button icon={<Trash2 />} onClick={() => setRemoving(true)}>
-              Delete target
+              {msg("targetPage.deleteTarget")}
             </Button>
           </div>
           <Dialog
             open={removing}
             onOpenChange={setRemoving}
-            title={`Delete ${target.name}?`}
-            description="Its reports, findings and decisions are deleted. You would add and verify it again to test it."
+            title={msg("targetPage.delete", { name: target.name })}
+            description={msg("targetPage.itsReportsFindingsAndDecisions")}
             footer={
               <>
                 <Button type="button" onClick={() => setRemoving(false)}>
-                  Cancel
+                  {msg("targetPage.cancel")}
                 </Button>
                 <Button type="button" variant="primary" onClick={() => void remove()}>
-                  Delete
+                  {msg("targetPage.delete2")}
                 </Button>
               </>
             }
@@ -600,8 +603,8 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
         </Panel>
       )}
       <FindingsTable call={call} targetId={id} summary={target ?? undefined} reload={() => (load(), reload())} />
-      <Panel title="Reports" flush>
-        <DataTable label="Reports" columns={columns} rows={scans ?? []} loading={!scans} getRowId={(s) => s.id} minWidth={720} empty={<EmptyState title="No reports">Nothing has been sent for this target.</EmptyState>} />
+      <Panel title={msg("targetPage.reports")} flush>
+        <DataTable label={msg("targetPage.reports")} columns={columns} rows={scans ?? []} loading={!scans} getRowId={(s) => s.id} minWidth={720} empty={<EmptyState title={msg("targetPage.noReports")}>{msg("targetPage.nothingHasBeenSentFor")}</EmptyState>} />
       </Panel>
     </>
   );
@@ -610,24 +613,25 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
 // ---------------------------------------------------------------- Setup
 
 function SetupPage() {
+  const t = useT();
   const origin = window.location.origin;
   return (
     <>
-      <PageHeader title="Setup" description="Run ZAP or Nuclei against an application you own, and send the report here. The answer says whether the check passes." />
-      <Panel title="Send a report" description="Add the target first and verify it. Use DAST_INGEST_TOKEN, set where dast runs, or an API token with the editor role from API tokens.">
+      <PageHeader title={t("setupPage.setup")} description={t("setupPage.runZapOrNucleiAgainst")} />
+      <Panel title={t("setupPage.sendAReport")} description={t("setupPage.addTheTargetFirstAnd")}>
         <Code>{`nuclei -u https://shop.example.com -se results.sarif
 curl -sf -X POST -H "Authorization: Bearer $DAST_INGEST_TOKEN" -H 'content-type: application/json' \
   --data-binary @results.sarif \
   "${origin}/api/v1/scans?target=shop-staging" > scan.json
 jq -e '.passed' scan.json   # fail the pipeline`}</Code>
       </Panel>
-      <Panel title="How a report is compared" description="Each engine's reports replace its own earlier ones. What it stops reporting is fixed; what it reports for the first time is new.">
+      <Panel title={t("setupPage.howAReportIsCompared")} description={t("setupPage.eachEngineSReportsReplace")}>
         <ul className="dast-list flex flex-col gap-1 text-sm text-fg-muted">
-          <li>The first report of an engine for a target adopts what is there and never fails a check.</li>
-          <li>A finding is found again by rule, page and parameter, not by query string.</li>
-          <li>Results outside the target's address are left out, and counted.</li>
-          <li>Passwords, cookies and tokens in what an engine saw are masked before they are stored.</li>
-          <li>dast does not run scans yet. When it does, an unverified target is never attacked.</li>
+          <li>{t("setupPage.theFirstReportOfAn")}</li>
+          <li>{t("setupPage.aFindingIsFoundAgain")}</li>
+          <li>{t("setupPage.resultsOutsideTheTargetS")}</li>
+          <li>{t("setupPage.passwordsCookiesAndTokensIn")}</li>
+          <li>{t("setupPage.dastDoesNotRunScans")}</li>
         </ul>
       </Panel>
     </>
@@ -636,9 +640,10 @@ jq -e '.passed' scan.json   # fail the pipeline`}</Code>
 
 /** The first screen, until the first target exists. The summary is polled, so it gives way by itself. */
 function WelcomePage() {
+  const t = useT();
   return (
     <>
-      <PageHeader title="Get started" description="Add a target you own, prove it, and send a report." actions={<StatusBadge tone="info">Waiting for the first target</StatusBadge>} />
+      <PageHeader title={t("welcomePage.getStarted")} description={t("welcomePage.addATargetYouOwn")} actions={<StatusBadge tone="info">{t("welcomePage.waitingForTheFirstTarget")}</StatusBadge>} />
       <SetupPage />
     </>
   );
@@ -648,8 +653,9 @@ function WelcomePage() {
 
 /** Account, Members, Sign-in and API tokens: the screens come from @openasy/auth. */
 function SettingsPage({ page }: { page: "account" | "members" | "signin" | "tokens" }) {
+  const t = useT();
   const { signOut, can } = useAuth();
-  if (page !== "account" && !can("admin")) return <EmptyState title="Admins only">Ask an admin of this dast for access.</EmptyState>;
+  if (page !== "account" && !can("admin")) return <EmptyState title={t("settingsPage.adminsOnly")}>{t("settingsPage.askAnAdminOfThis")}</EmptyState>;
   const titles = {
     account: ["Account", "Your profile, password, two-step verification and where you are signed in."],
     members: ["Members", "Who can sign in to this dast, and with which role. Viewers see everything; editors also triage findings; admins also add and verify targets, change policies, and manage members and tokens."],
@@ -664,7 +670,7 @@ function SettingsPage({ page }: { page: "account" | "members" | "signin" | "toke
         actions={
           page === "account" && (
             <Button icon={<LogOut />} onClick={() => void signOut()}>
-              Sign out
+              {t("settingsPage.signOut")}
             </Button>
           )
         }
@@ -675,6 +681,7 @@ function SettingsPage({ page }: { page: "account" | "members" | "signin" | "toke
 }
 
 function Product() {
+  const msg = useT();
   const [theme, setTheme] = useThemePreference();
   const { me, can } = useAuth();
   const route = parseRoute(usePath());
@@ -698,19 +705,19 @@ function Product() {
   }, [reload]);
 
   const nav = [
-    { id: "findings", label: "Findings", icon: Bug },
-    { id: "targets", label: "Targets", icon: Crosshair, count: summary?.targets },
+    { id: "findings", label: msg("product.findings"), icon: Bug },
+    { id: "targets", label: msg("product.targets"), icon: Crosshair, count: summary?.targets },
   ];
   const footerNav = [
-    { id: "setup", label: "Setup", icon: Settings2 },
+    { id: "setup", label: msg("product.setup"), icon: Settings2 },
     ...(can("admin")
       ? [
-          { id: "members", label: "Members", icon: Users },
-          { id: "signin", label: "Sign-in", icon: LogIn },
-          { id: "tokens", label: "API tokens", icon: KeyRound },
+          { id: "members", label: msg("product.members"), icon: Users },
+          { id: "signin", label: msg("product.signIn"), icon: LogIn },
+          { id: "tokens", label: msg("product.apiTokens"), icon: KeyRound },
         ]
       : []),
-    { id: "account", label: "Account", icon: UserRound },
+    { id: "account", label: msg("product.account"), icon: UserRound },
   ];
   const active = route.page === "target" ? "targets" : route.page;
   const roleName = me.user.role.charAt(0).toUpperCase() + me.user.role.slice(1);
