@@ -45,7 +45,9 @@ async function call(method: string, path: string, init: RequestInit = {}, concre
   // A response is either inline or a $ref to components/responses; build the JSON pointer to its schema either way.
   const shared = declared!.$ref?.split("/").pop();
   const response = shared ? spec.components.responses[shared]! : declared!;
-  const at = shared ? `openapi#/components/responses/${shared}` : `openapi#/paths/${path.replaceAll("/", "~1")}/${method.toLowerCase()}/responses/${res.status}`;
+  const at = shared
+    ? `openapi#/components/responses/${shared}`
+    : `openapi#/paths/${path.replaceAll("/", "~1")}/${method.toLowerCase()}/responses/${res.status}`;
 
   if (!response.content) {
     expect(res.headers.get("content-length") ?? "0", `${method} ${path} ${res.status} should have no body`).toBe("0");
@@ -61,7 +63,10 @@ async function call(method: string, path: string, init: RequestInit = {}, concre
   return { res, body };
 }
 
-const auth = (token: string, body?: string, type = "application/json") => ({ headers: { authorization: `Bearer ${token}`, "content-type": type }, ...(body !== undefined && { body }) });
+const auth = (token: string, body?: string, type = "application/json") => ({
+  headers: { authorization: `Bearer ${token}`, "content-type": type },
+  ...(body !== undefined && { body }),
+});
 const admin = (body?: unknown) => auth(ADMIN_TOKEN, body === undefined ? undefined : typeof body === "string" ? body : JSON.stringify(body));
 const inDays = (d: number) => new Date(Date.now() + d * 86_400_000).toISOString();
 
@@ -105,7 +110,10 @@ describe("responses match openapi.json", () => {
   });
 
   it("targets: add, verify, change", async () => {
-    const created = (await call("POST", "/api/v1/targets", admin({ name: "shop-staging", url: shop }))).body as { id: string; verification: { content: string } };
+    const created = (await call("POST", "/api/v1/targets", admin({ name: "shop-staging", url: shop }))).body as {
+      id: string;
+      verification: { content: string };
+    };
     target = created.id;
     proof = created.verification.content;
     await call("POST", "/api/v1/targets", admin({ name: "shop-staging", url: "https://other.example.com" }));
@@ -120,7 +128,9 @@ describe("responses match openapi.json", () => {
     await call("GET", "/api/v1/targets/{id}", admin(), "/api/v1/targets/missing");
     await call("POST", "/api/v1/targets/{id}/verify", admin(), `/api/v1/targets/${target}/verify`);
     app.site.served.set(shop, proof);
-    expect(((await call("POST", "/api/v1/targets/{id}/verify", admin(), `/api/v1/targets/${target}/verify`)).body as { verified: boolean }).verified).toBe(true);
+    expect(((await call("POST", "/api/v1/targets/{id}/verify", admin(), `/api/v1/targets/${target}/verify`)).body as { verified: boolean }).verified).toBe(
+      true,
+    );
     await call("POST", "/api/v1/targets/{id}/verify", admin(), "/api/v1/targets/missing/verify");
     await call("POST", "/api/v1/targets/{id}/verify", { method: "POST" }, `/api/v1/targets/${target}/verify`);
     await call("PATCH", "/api/v1/targets/{id}", admin({ failOn: "critical", production: true }), `/api/v1/targets/${target}`);
@@ -132,7 +142,10 @@ describe("responses match openapi.json", () => {
 
   it("reports and every refusal", async () => {
     await call("POST", "/api/v1/scans", send(), path("target=shop-staging"));
-    const second = (await call("POST", "/api/v1/scans", send(report("a", "b")), path("target=shop-staging&engine=zap"))).body as { id: string; findings: Array<{ fingerprint: string }> };
+    const second = (await call("POST", "/api/v1/scans", send(report("a", "b")), path("target=shop-staging&engine=zap"))).body as {
+      id: string;
+      findings: Array<{ fingerprint: string }>;
+    };
     fingerprint = second.findings[0]!.fingerprint;
     await call("POST", "/api/v1/scans", send(), path("target=missing"));
     await call("POST", "/api/v1/scans", send("{nope"), path("target=shop-staging"));
@@ -161,7 +174,8 @@ describe("responses match openapi.json", () => {
     await call("GET", "/api/v1/targets/{id}/findings", admin(), "/api/v1/targets/missing/findings");
     await call("GET", "/api/v1/targets/{id}/findings", {}, `/api/v1/targets/${target}/findings`);
 
-    const put = (fp: string, state: unknown) => call("PUT", "/api/v1/targets/{id}/findings/{fingerprint}", admin(state), `/api/v1/targets/${target}/findings/${fp}`);
+    const put = (fp: string, state: unknown) =>
+      call("PUT", "/api/v1/targets/{id}/findings/{fingerprint}", admin(state), `/api/v1/targets/${target}/findings/${fp}`);
     await put(fingerprint, { state: "false-positive", reason: "A test page" });
     await put(fingerprint, { state: "accepted", reason: "Behind the VPN", expiresAt: inDays(30) });
     await put(fingerprint, { state: "accepted", reason: "No end" });

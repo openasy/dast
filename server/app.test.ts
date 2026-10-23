@@ -63,13 +63,31 @@ describe("targets", () => {
 describe("reports", () => {
   it("adopts the first report of an engine, even when it holds high findings", async () => {
     const scan = await json(await zap(sqli, xss, headers));
-    expect(scan).toMatchObject({ engine: "zap", tool: "ZAP", total: 3, new: 3, blocking: 0, passed: true, resolved: 0, ignored: 0, target: { name: "shop-staging" } });
+    expect(scan).toMatchObject({
+      engine: "zap",
+      tool: "ZAP",
+      total: 3,
+      new: 3,
+      blocking: 0,
+      passed: true,
+      resolved: 0,
+      ignored: 0,
+      target: { name: "shop-staging" },
+    });
     expect((await json(await app.admin("/api/v1/targets")).then((r: any) => r.targets[0])).open).toEqual({ critical: 0, high: 2, medium: 0, low: 1 });
   });
 
   it("fails a later report for new findings at or above failOn", async () => {
     // The same findings on other query strings are not new; one high and one medium are.
-    const scan = await json(await zap({ ...sqli, url: `${shop}/search?q=2` }, xss, headers, { rule: "90020", level: "error", url: `${shop}/api/export`, message: "Remote OS command injection" }, { rule: "10020", score: 5, url: `${shop}/` }));
+    const scan = await json(
+      await zap(
+        { ...sqli, url: `${shop}/search?q=2` },
+        xss,
+        headers,
+        { rule: "90020", level: "error", url: `${shop}/api/export`, message: "Remote OS command injection" },
+        { rule: "10020", score: 5, url: `${shop}/` },
+      ),
+    );
     expect(scan).toMatchObject({ total: 5, new: 2, blocking: 1, passed: false, failOn: "high" });
     expect(scan.findings.map((f: { rule: string }) => f.rule)).toEqual(["90020", "10020"]);
   });
@@ -81,16 +99,31 @@ describe("reports", () => {
     const id = (await json(await app.admin("/api/v1/targets"))).targets[0].id;
     const resolved = (await json(await app.admin(`/api/v1/targets/${id}/findings?status=resolved`))).findings.map((f: { rule: string }) => f.rule).sort();
     expect(resolved).toEqual(["10020", "40018", "90020"]);
-    expect((await json(await app.admin(`/api/v1/targets/${id}/findings`))).findings.map((f: { rule: string }) => f.rule).sort()).toEqual(["10038", "40012", "git-config"]);
+    expect((await json(await app.admin(`/api/v1/targets/${id}/findings`))).findings.map((f: { rule: string }) => f.rule).sort()).toEqual([
+      "10038",
+      "40012",
+      "git-config",
+    ]);
   });
 
   it("leaves out findings outside the target's address", async () => {
-    const scan = await json(await nuclei(exposed, { rule: "x", url: "https://other.example.com/a" }, { rule: "y", url: "https://shop.example.com.evil.net/a" }, { rule: "z", url: "src/file.js" }));
+    const scan = await json(
+      await nuclei(
+        exposed,
+        { rule: "x", url: "https://other.example.com/a" },
+        { rule: "y", url: "https://shop.example.com.evil.net/a" },
+        { rule: "z", url: "src/file.js" },
+      ),
+    );
     expect(scan).toMatchObject({ total: 1, ignored: 3, new: 0 });
   });
 
   it("takes a gzipped body and an engine name", async () => {
-    const res = await app.ingest(`/api/v1/scans?${new URLSearchParams({ target: "shop-staging", engine: "custom" })}`, { method: "POST", body: gzipSync(sarif("My scanner", headers)), headers: { "content-encoding": "gzip" } });
+    const res = await app.ingest(`/api/v1/scans?${new URLSearchParams({ target: "shop-staging", engine: "custom" })}`, {
+      method: "POST",
+      body: gzipSync(sarif("My scanner", headers)),
+      headers: { "content-encoding": "gzip" },
+    });
     expect(await json(res)).toMatchObject({ engine: "custom", tool: "My scanner", total: 1 });
   });
 
@@ -102,7 +135,11 @@ describe("reports", () => {
     await problem(await app.scan({ target: "shop-staging", engine: "Bad Engine" }, sarif("ZAP")), 422, "invalid-body");
     await problem(await app.scan({ target: "shop-staging" }, "{nope"), 422, "invalid-sarif");
     await problem(await app.scan({ target: "shop-staging" }, JSON.stringify({ hello: 1 })), 422, "invalid-sarif");
-    await problem(await app.ingest("/api/v1/scans?target=shop-staging", { method: "POST", body: "x", headers: { "content-encoding": "br" } }), 400, "invalid-body");
+    await problem(
+      await app.ingest("/api/v1/scans?target=shop-staging", { method: "POST", body: "x", headers: { "content-encoding": "br" } }),
+      400,
+      "invalid-body",
+    );
   });
 });
 
@@ -134,7 +171,9 @@ describe("triage and policy", () => {
     // It goes missing and comes back: still triaged, so it is not new.
     await zap(headers);
     expect(await json(await zap(xss, headers))).toMatchObject({ new: 0, suppressed: 1, passed: true });
-    expect((await json(await app.admin(`/api/v1/targets/${t.id}/findings?status=suppressed`))).findings.map((f: { rule: string }) => f.rule)).toEqual(["40012"]);
+    expect((await json(await app.admin(`/api/v1/targets/${t.id}/findings?status=suppressed`))).findings.map((f: { rule: string }) => f.rule)).toEqual([
+      "40012",
+    ]);
     expect(await json(await put({ state: "open" }))).toMatchObject({ triage: null });
   });
 
@@ -142,9 +181,16 @@ describe("triage and policy", () => {
     const t = await target();
     const patch = (body: unknown) => app.admin(`/api/v1/targets/${t.id}`, { method: "PATCH", body: JSON.stringify(body) });
     expect(await json(await patch({ failOn: "none", production: true }))).toMatchObject({ failOn: "none", production: true });
-    expect(await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }))).toMatchObject({ new: 1, blocking: 0, passed: true, failOn: "none" });
+    expect(await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }))).toMatchObject({
+      new: 1,
+      blocking: 0,
+      passed: true,
+      failOn: "none",
+    });
     await patch({ failOn: "critical" });
-    expect(await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }, { rule: "crit", score: 9.9, url: `${shop}/crit` }))).toMatchObject({ new: 1, blocking: 1, passed: false });
+    expect(
+      await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }, { rule: "crit", score: 9.9, url: `${shop}/crit` })),
+    ).toMatchObject({ new: 1, blocking: 1, passed: false });
     expect((await patch({})).status).toBe(422);
     expect((await patch({ failOn: "urgent" })).status).toBe(422);
     expect((await patch({ url: "https://x.example.com" })).status).toBe(422);

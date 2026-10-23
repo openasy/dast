@@ -129,15 +129,21 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
   function openCounts(targetId?: string): Counts {
     const c = zero();
     const rows = db
-      .prepare(`SELECT severity, COUNT(*) AS n FROM findings WHERE resolved_at IS NULL AND NOT ${SUPPRESSED} ${targetId ? "AND target_id = ?" : ""} GROUP BY severity`)
+      .prepare(
+        `SELECT severity, COUNT(*) AS n FROM findings WHERE resolved_at IS NULL AND NOT ${SUPPRESSED} ${targetId ? "AND target_id = ?" : ""} GROUP BY severity`,
+      )
       .all(...([now(), ...(targetId ? [targetId] : [])] as SQLInputValue[])) as Array<{ severity: Severity; n: number }>;
     for (const r of rows) c[r.severity] = r.n;
     return c;
   }
 
   function presentTarget(t: Record<string, any>) {
-    const last = db.prepare("SELECT created_at, engine, new_count, blocking FROM scans WHERE target_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1").get(t.id) as Record<string, any> | undefined;
-    const suppressed = (db.prepare(`SELECT COUNT(*) AS n FROM findings WHERE target_id = ? AND resolved_at IS NULL AND ${SUPPRESSED}`).get(t.id, now()) as { n: number }).n;
+    const last = db
+      .prepare("SELECT created_at, engine, new_count, blocking FROM scans WHERE target_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1")
+      .get(t.id) as Record<string, any> | undefined;
+    const suppressed = (
+      db.prepare(`SELECT COUNT(*) AS n FROM findings WHERE target_id = ? AND resolved_at IS NULL AND ${SUPPRESSED}`).get(t.id, now()) as { n: number }
+    ).n;
     const verified = t.verified_at !== null;
     return {
       id: t.id as string,
@@ -148,7 +154,9 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       verified,
       verifiedAt: (t.verified_at as string | null) ?? null,
       // Shown until the target is verified. Knowing it proves nothing; serving it from the target does.
-      verification: verified ? null : { method: "file" as const, url: `${t.url.replace(/^(https?:\/\/[^/]+).*$/, "$1")}${VERIFY_PATH}`, content: t.verify_token as string },
+      verification: verified
+        ? null
+        : { method: "file" as const, url: `${t.url.replace(/^(https?:\/\/[^/]+).*$/, "$1")}${VERIFY_PATH}`, content: t.verify_token as string },
       open: openCounts(t.id),
       suppressed,
       lastScan: last ? { at: last.created_at as string, engine: last.engine as string, new: last.new_count as number, passed: last.blocking === 0 } : null,
@@ -171,7 +179,10 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       firstSeen: f.first_seen,
       lastSeen: f.last_seen,
       resolvedAt: f.resolved_at,
-      triage: f.triage === "open" ? null : { state: f.triage as Exclude<Triage, "open">, reason: f.reason!, by: f.triaged_by, at: f.triaged_at, expiresAt: f.expires_at, active },
+      triage:
+        f.triage === "open"
+          ? null
+          : { state: f.triage as Exclude<Triage, "open">, reason: f.reason!, by: f.triaged_by, at: f.triaged_at, expiresAt: f.expires_at, active },
     };
   }
 
@@ -198,7 +209,10 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
          ORDER BY ${RANK_SQL.replaceAll("severity", "f.severity")} DESC, f.first_seen DESC, f.fingerprint LIMIT ? OFFSET ?`,
       )
       .all(...args, limit + 1, offset) as unknown as FindingRow[];
-    return { items: rows.slice(0, limit).map(presentFinding), ...(rows.length > limit && { nextCursor: encodeCursor(offset + limit) }) } satisfies Page<unknown>;
+    return {
+      items: rows.slice(0, limit).map(presentFinding),
+      ...(rows.length > limit && { nextCursor: encodeCursor(offset + limit) }),
+    } satisfies Page<unknown>;
   }
 
   function presentScan(s: Record<string, any>, targetName: string) {
@@ -227,12 +241,22 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
   return {
     createTarget(body: Record<string, unknown>) {
       const { name, url, production = false, failOn = "high", ...rest } = body;
-      if (Object.keys(rest).length || typeof name !== "string" || !NAME.test(name)) throw bad("Expected { name, url, production?, failOn? }; name is up to 64 letters, digits, . _ and -.");
+      if (Object.keys(rest).length || typeof name !== "string" || !NAME.test(name))
+        throw bad("Expected { name, url, production?, failOn? }; name is up to 64 letters, digits, . _ and -.");
       if (typeof production !== "boolean") throw bad("production must be true or false.");
       const address = targetUrl(url);
-      if (db.prepare("SELECT 1 FROM targets WHERE name = ? OR url = ?").get(name, address)) throw new DastError(409, "conflict", "A target with this name or address exists.");
+      if (db.prepare("SELECT 1 FROM targets WHERE name = ? OR url = ?").get(name, address))
+        throw new DastError(409, "conflict", "A target with this name or address exists.");
       const id = randomUUID();
-      db.prepare("INSERT INTO targets (id, name, url, production, fail_on, verify_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(id, name, address, production ? 1 : 0, failOnOf(failOn), `openasy-dast-${randomBytes(16).toString("hex")}`, now());
+      db.prepare("INSERT INTO targets (id, name, url, production, fail_on, verify_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+        id,
+        name,
+        address,
+        production ? 1 : 0,
+        failOnOf(failOn),
+        `openasy-dast-${randomBytes(16).toString("hex")}`,
+        now(),
+      );
       return presentTarget(targetRow(id));
     },
 
@@ -270,7 +294,8 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
         } catch (err) {
           throw new DastError(422, "verification-failed", `Could not read the proof: ${(err as Error).message}`);
         }
-        if (answer.trim() !== t.verify_token) throw new DastError(422, "verification-failed", `${new URL(VERIFY_PATH, t.url).href} does not hold the verification content.`);
+        if (answer.trim() !== t.verify_token)
+          throw new DastError(422, "verification-failed", `${new URL(VERIFY_PATH, t.url).href} does not hold the verification content.`);
         db.prepare("UPDATE targets SET verified_at = ? WHERE id = ?").run(now(), id);
       }
       return presentTarget(targetRow(id));
@@ -311,7 +336,10 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       db.exec("BEGIN IMMEDIATE");
       try {
         const known = new Map<string, { resolved_at: string | null; triage: Triage; expires_at: string | null }>();
-        for (const r of db.prepare("SELECT fingerprint, resolved_at, triage, expires_at FROM findings WHERE target_id = ? AND engine = ?").all(target.id, engine) as Array<{ fingerprint: string; resolved_at: string | null; triage: Triage; expires_at: string | null }>) known.set(r.fingerprint, r);
+        for (const r of db
+          .prepare("SELECT fingerprint, resolved_at, triage, expires_at FROM findings WHERE target_id = ? AND engine = ?")
+          .all(target.id, engine) as Array<{ fingerprint: string; resolved_at: string | null; triage: Triage; expires_at: string | null }>)
+          known.set(r.fingerprint, r);
         const first = !db.prepare("SELECT 1 FROM scans WHERE target_id = ? AND engine = ?").get(target.id, engine);
         const triaged = (f: Finding) => {
           const k = known.get(f.fingerprint);
@@ -328,7 +356,9 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
              first_seen = CASE WHEN findings.resolved_at IS NULL THEN findings.first_seen ELSE excluded.first_seen END, resolved_at = NULL`,
         );
         for (const f of kept) upsert.run(target.id, f.fingerprint, engine, f.ruleId, f.severity, f.url, f.param, f.message, f.evidence, at, at);
-        const resolved = db.prepare("UPDATE findings SET resolved_at = ? WHERE target_id = ? AND engine = ? AND resolved_at IS NULL AND last_seen < ?").run(at, target.id, engine, at).changes as number;
+        const resolved = db
+          .prepare("UPDATE findings SET resolved_at = ? WHERE target_id = ? AND engine = ? AND resolved_at IS NULL AND last_seen < ?")
+          .run(at, target.id, engine, at).changes as number;
 
         db.prepare(
           "INSERT INTO scans (id, target_id, engine, tool, total, new_count, resolved, suppressed, ignored, blocking, fail_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
@@ -369,12 +399,18 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
     scans(targetId: string, cursor: string | undefined, limit: number) {
       const t = targetRow(targetId);
       const offset = decodeCursor(cursor);
-      const rows = db.prepare("SELECT * FROM scans WHERE target_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?").all(targetId, limit + 1, offset) as Array<Record<string, any>>;
-      return { items: rows.slice(0, limit).map((s) => presentScan(s, t.name)), ...(rows.length > limit && { nextCursor: encodeCursor(offset + limit) }) } satisfies Page<unknown>;
+      const rows = db
+        .prepare("SELECT * FROM scans WHERE target_id = ? ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?")
+        .all(targetId, limit + 1, offset) as Array<Record<string, any>>;
+      return {
+        items: rows.slice(0, limit).map((s) => presentScan(s, t.name)),
+        ...(rows.length > limit && { nextCursor: encodeCursor(offset + limit) }),
+      } satisfies Page<unknown>;
     },
 
     scan(id: string) {
-      const s = db.prepare("SELECT s.*, t.name AS target_name FROM scans s JOIN targets t ON t.id = s.target_id WHERE s.id = ?").get(id) as Record<string, any> | undefined;
+      const s = db.prepare("SELECT s.*, t.name AS target_name FROM scans s JOIN targets t ON t.id = s.target_id WHERE s.id = ?").get(id) as
+        Record<string, any> | undefined;
       if (!s) throw notFound("The scan");
       return presentScan(s, s.target_name);
     },
@@ -383,10 +419,13 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
     triage(targetId: string, fingerprint: string, body: Record<string, unknown>, by: string) {
       targetRow(targetId);
       const { state, reason, expiresAt, ...rest } = body;
-      if (Object.keys(rest).length || typeof state !== "string" || !TRIAGE.includes(state as Triage)) throw bad(`Expected { state, reason?, expiresAt? }; state is one of ${TRIAGE.join(", ")}.`);
+      if (Object.keys(rest).length || typeof state !== "string" || !TRIAGE.includes(state as Triage))
+        throw bad(`Expected { state, reason?, expiresAt? }; state is one of ${TRIAGE.join(", ")}.`);
       if (!db.prepare("SELECT 1 FROM findings WHERE target_id = ? AND fingerprint = ?").get(targetId, fingerprint)) throw notFound("The finding");
       if (state === "open") {
-        db.prepare("UPDATE findings SET triage = 'open', reason = NULL, triaged_by = NULL, triaged_at = NULL, expires_at = NULL WHERE target_id = ? AND fingerprint = ?").run(targetId, fingerprint);
+        db.prepare(
+          "UPDATE findings SET triage = 'open', reason = NULL, triaged_by = NULL, triaged_at = NULL, expires_at = NULL WHERE target_id = ? AND fingerprint = ?",
+        ).run(targetId, fingerprint);
       } else {
         // A decision without a reason is lost the day its author leaves (ADR 0037).
         if (typeof reason !== "string" || reason.trim().length < 3 || reason.length > 500) throw bad("reason is required: 3 to 500 characters.");
@@ -399,9 +438,19 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
         }
         // Accepted risk always ends; a false positive does not need to.
         if (state === "accepted" && !expires) throw bad("expiresAt is required for accepted risk.");
-        db.prepare("UPDATE findings SET triage = ?, reason = ?, triaged_by = ?, triaged_at = ?, expires_at = ? WHERE target_id = ? AND fingerprint = ?").run(state, reason.trim(), by, now(), expires, targetId, fingerprint);
+        db.prepare("UPDATE findings SET triage = ?, reason = ?, triaged_by = ?, triaged_at = ?, expires_at = ? WHERE target_id = ? AND fingerprint = ?").run(
+          state,
+          reason.trim(),
+          by,
+          now(),
+          expires,
+          targetId,
+          fingerprint,
+        );
       }
-      const row = db.prepare("SELECT f.*, t.name AS target_name FROM findings f JOIN targets t ON t.id = f.target_id WHERE f.target_id = ? AND f.fingerprint = ?").get(targetId, fingerprint) as unknown as FindingRow;
+      const row = db
+        .prepare("SELECT f.*, t.name AS target_name FROM findings f JOIN targets t ON t.id = f.target_id WHERE f.target_id = ? AND f.fingerprint = ?")
+        .get(targetId, fingerprint) as unknown as FindingRow;
       return presentFinding(row);
     },
 

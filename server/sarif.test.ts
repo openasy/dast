@@ -7,9 +7,26 @@ const shop = "https://shop.example.com";
 
 describe("parseSarif", () => {
   it("reads rule, page, parameter, message and evidence", () => {
-    const { tool, findings } = parse("ZAP", { rule: "10202", level: "error", url: `${shop}/cart?id=7#top`, param: "id", message: "Absence of anti-CSRF tokens", evidence: "<form action=/cart>" });
+    const { tool, findings } = parse("ZAP", {
+      rule: "10202",
+      level: "error",
+      url: `${shop}/cart?id=7#top`,
+      param: "id",
+      message: "Absence of anti-CSRF tokens",
+      evidence: "<form action=/cart>",
+    });
     expect(tool).toBe("ZAP");
-    expect(findings).toMatchObject([{ fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/), ruleId: "10202", severity: "high", url: `${shop}/cart`, param: "id", message: "Absence of anti-CSRF tokens", evidence: "<form action=/cart>" }]);
+    expect(findings).toMatchObject([
+      {
+        fingerprint: expect.stringMatching(/^[0-9a-f]{32}$/),
+        ruleId: "10202",
+        severity: "high",
+        url: `${shop}/cart`,
+        param: "id",
+        message: "Absence of anti-CSRF tokens",
+        evidence: "<form action=/cart>",
+      },
+    ]);
   });
 
   it("takes severity from security-severity first, then from the level", () => {
@@ -41,7 +58,8 @@ describe("parseSarif", () => {
   });
 
   it("masks credentials in evidence", () => {
-    const evidence = parse("zap", { rule: "r", url: shop, evidence: "Authorization: Bearer abcdefghijklmnop\nCookie: sid=1\npassword=hunter2&x=1" }).findings[0]!.evidence!;
+    const evidence = parse("zap", { rule: "r", url: shop, evidence: "Authorization: Bearer abcdefghijklmnop\nCookie: sid=1\npassword=hunter2&x=1" })
+      .findings[0]!.evidence!;
     expect(evidence).not.toMatch(/abcdefghijklmnop|sid=1|hunter2/);
     expect(evidence).toContain("password=***&x=1");
   });

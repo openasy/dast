@@ -54,7 +54,8 @@ export function pageOf(uri: string): URL | null {
 
 /** Reads the results of a SARIF 2.1.0 log from ZAP, Nuclei or another scanner of running applications. */
 export function parseSarif(body: unknown): { tool: string; findings: Array<Finding & { page: URL }>; skipped: number } {
-  if (!isObj(body) || !Array.isArray(body.runs)) throw new SarifError("Send a SARIF 2.1.0 log: a JSON object with a runs array, for example from `nuclei -se results.sarif`.");
+  if (!isObj(body) || !Array.isArray(body.runs))
+    throw new SarifError("Send a SARIF 2.1.0 log: a JSON object with a runs array, for example from `nuclei -se results.sarif`.");
   if (typeof body.version === "string" && !body.version.startsWith("2.1")) throw new SarifError(`SARIF ${body.version} is not supported; send version 2.1.0.`);
   const tools: string[] = [];
   const found: Array<Omit<Finding, "fingerprint"> & { page: URL }> = [];
@@ -71,7 +72,10 @@ export function parseSarif(body: unknown): { tool: string; findings: Array<Findi
       if (found.length >= MAX_RESULTS) throw new SarifError(`A report may hold at most ${MAX_RESULTS} results.`);
       const ruleId = text(result.ruleId ?? (isObj(result.rule) ? result.rule.id : undefined), 256) ?? "unknown";
       const rule = rules.get(ruleId);
-      const location = Array.isArray(result.locations) && isObj(result.locations[0]) && isObj(result.locations[0].physicalLocation) ? result.locations[0].physicalLocation : {};
+      const location =
+        Array.isArray(result.locations) && isObj(result.locations[0]) && isObj(result.locations[0].physicalLocation)
+          ? result.locations[0].physicalLocation
+          : {};
       const uri = text(isObj(location.artifactLocation) ? location.artifactLocation.uri : undefined, 2048);
       const page = uri ? pageOf(uri) : null;
       if (!page) {
@@ -83,11 +87,17 @@ export function parseSarif(body: unknown): { tool: string; findings: Array<Findi
       const evidence = text(props.evidence ?? props.attack ?? (isObj(region.snippet) ? region.snippet.text : undefined), 2000);
       found.push({
         ruleId,
-        severity: fromScore(props["security-severity"]) ?? fromScore(isObj(rule?.properties) ? rule!.properties["security-severity"] : undefined) ?? fromLevel(result.level ?? (isObj(rule?.defaultConfiguration) ? rule!.defaultConfiguration.level : undefined)),
+        severity:
+          fromScore(props["security-severity"]) ??
+          fromScore(isObj(rule?.properties) ? rule!.properties["security-severity"] : undefined) ??
+          fromLevel(result.level ?? (isObj(rule?.defaultConfiguration) ? rule!.defaultConfiguration.level : undefined)),
         url: page.origin + page.pathname,
         page,
         param: text(props.param ?? props.parameter, 128),
-        message: text(isObj(result.message) ? (result.message.text ?? result.message.markdown) : undefined, 1000) ?? text(isObj(rule?.shortDescription) ? rule!.shortDescription.text : undefined, 1000) ?? ruleId,
+        message:
+          text(isObj(result.message) ? (result.message.text ?? result.message.markdown) : undefined, 1000) ??
+          text(isObj(rule?.shortDescription) ? rule!.shortDescription.text : undefined, 1000) ??
+          ruleId,
         evidence: evidence ? mask(evidence) : null,
       });
     }
@@ -96,7 +106,10 @@ export function parseSarif(body: unknown): { tool: string; findings: Array<Findi
   const seen = new Set<string>();
   const findings: Array<Finding & { page: URL }> = [];
   for (const f of found) {
-    const fingerprint = createHash("sha256").update(`${f.ruleId}\n${f.url}\n${f.param ?? ""}`).digest("hex").slice(0, 32);
+    const fingerprint = createHash("sha256")
+      .update(`${f.ruleId}\n${f.url}\n${f.param ?? ""}`)
+      .digest("hex")
+      .slice(0, 32);
     if (seen.has(fingerprint)) continue;
     seen.add(fingerprint);
     findings.push({ ...f, fingerprint });

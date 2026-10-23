@@ -32,7 +32,11 @@ export function sarif(tool: string, ...results: TestResult[]) {
           ruleId: r.rule,
           level: r.level ?? "warning",
           message: { text: r.message ?? `${r.rule} found` },
-          properties: { ...(r.score !== undefined && { "security-severity": String(r.score) }), ...(r.param && { param: r.param }), ...(r.evidence && { evidence: r.evidence }) },
+          properties: {
+            ...(r.score !== undefined && { "security-severity": String(r.score) }),
+            ...(r.param && { param: r.param }),
+            ...(r.evidence && { evidence: r.evidence }),
+          },
           locations: [{ physicalLocation: { artifactLocation: { uri: r.url } } }],
         })),
       },
@@ -63,7 +67,10 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   const auth = createAuth({ db, product: "dast", productName: "OpenAsy DAST", origin: base });
   const { site: _site, ...rest } = opts;
   handler = createApp({ db, dast, auth, ingestToken: INGEST_TOKEN, adminToken: ADMIN_TOKEN, ...rest });
-  const as = (token: string) => (path: string, init: RequestInit = {}) => fetch(base + path, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...init.headers } });
+  const as =
+    (token: string) =>
+    (path: string, init: RequestInit = {}) =>
+      fetch(base + path, { ...init, headers: { authorization: `Bearer ${token}`, "content-type": "application/json", ...init.headers } });
   const admin = as(ADMIN_TOKEN);
   const ingest = as(INGEST_TOKEN);
   /** Sends a report the way CI does. */
