@@ -23,9 +23,9 @@ services:
       # For CI: it can send reports and nothing else. Or use an API token with the editor role from Settings.
       DAST_INGEST_TOKEN: ${DAST_INGEST_TOKEN:-}
       # Sign in with your identity provider (OIDC), see the README:
-      # DAST_OIDC_ISSUER: https://login.example.com
-      # DAST_OIDC_CLIENT_ID: dast
-      # DAST_OIDC_CLIENT_SECRET: ${DAST_OIDC_CLIENT_SECRET}
+      # OPENASY_OIDC_ISSUER: https://login.example.com
+      # OPENASY_OIDC_CLIENT_ID: dast
+      # OPENASY_OIDC_CLIENT_SECRET: ${OPENASY_OIDC_CLIENT_SECRET}
 
 volumes:
   dast-data:

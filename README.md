@@ -77,7 +77,7 @@ backups.
 | `DAST_RETENTION_DAYS` | `365` | Reports, and fixed findings nobody triaged, older than this are deleted |
 | `DAST_METRICS_PORT` | | Serve `/metrics` on this port only (ADR 0026) |
 | `DAST_HEADLESS` | `false` | `true` serves only the API |
-| `DAST_PASSWORD_SIGN_IN`, `DAST_OIDC_*` | | Sign-in, as in every OpenAsy product ([@openasy/auth](https://github.com/openasy/auth)). Owners can also add identity providers under Settings, Sign-in |
+| `DAST_PASSWORD_SIGN_IN`, `OPENASY_OIDC_*` | | Sign-in, as in every OpenAsy product ([@openasy/auth](https://github.com/openasy/auth)). Owners can also add identity providers under Settings, Sign-in |
 
 The container runs as non-root with a read-only root filesystem, no capabilities and `no-new-privileges`.
 
