@@ -88,6 +88,24 @@ const MIGRATIONS = [
    ALTER TABLE targets ADD COLUMN schedule TEXT NOT NULL DEFAULT 'none' CHECK (schedule IN ('none', 'daily', 'weekly'));
    ALTER TABLE targets ADD COLUMN schedule_profile TEXT NOT NULL DEFAULT 'standard' CHECK (schedule_profile IN ('passive', 'standard', 'full'));
    ALTER TABLE targets ADD COLUMN next_scan_at TEXT;`,
+  // Auth profiles: how a scan gets past a target's login (ADR 0037). The secret, a header value or a password, is
+  // sealed with openasy-kek and sent only to the agent running a scan that uses it.
+  `CREATE TABLE auth_profiles (
+     id TEXT PRIMARY KEY,
+     target_id TEXT NOT NULL REFERENCES targets (id) ON DELETE CASCADE,
+     name TEXT NOT NULL,
+     kind TEXT NOT NULL CHECK (kind IN ('header', 'form')),
+     header_name TEXT,
+     login_url TEXT,
+     username_field TEXT,
+     password_field TEXT,
+     username TEXT,
+     logged_in_regex TEXT,
+     secret TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     UNIQUE (target_id, name)
+   );
+   ALTER TABLE scan_jobs ADD COLUMN auth_profile_id TEXT REFERENCES auth_profiles (id) ON DELETE SET NULL;`,
 ];
 
 /** Opens the product's single SQLite file in WAL mode (ADR 0011) and migrates it forward. */

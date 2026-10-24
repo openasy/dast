@@ -200,7 +200,10 @@
       "failed": "Failed"
     },
     "noJobs": "No scans by an agent yet",
-    "noJobsDetail": "Start one here, or set a schedule. An agent must be enrolled under Agents."
+    "noJobsDetail": "Start one here, or set a schedule. An agent must be enrolled under Agents.",
+    "login": "Login",
+    "noLogin": "None, signed out",
+    "as": "as {{login}}"
   },
   "agentsPage": {
     "title": "Agents",
@@ -228,5 +231,34 @@
     "start": "Start {{name}}",
     "startDescription": "Run this where the agent can reach your applications and dast. The token works once, for 7 days, and is not shown again.",
     "done": "Done"
+  },
+  "authProfiles": {
+    "title": "Logins",
+    "description": "For scans behind the target's sign-in page. The secret is sealed, never shown again, and sent only to the agent running a scan that uses it. ZAP uses both kinds; Nuclei sends a header login and runs signed out with a form login.",
+    "add": "Add login",
+    "addDescription": "Use an account made for scanning, with test data only: a scan presses every button it finds.",
+    "name": "Name",
+    "kind": "Kind",
+    "kinds": {
+      "header": "Header",
+      "form": "Form login"
+    },
+    "how": "How",
+    "actions": "Actions",
+    "remove": "Remove login {{name}}",
+    "none": "No logins",
+    "noneDetail": "Scans see only what a signed-out visitor sees.",
+    "headerName": "Header",
+    "value": "Value",
+    "loginUrl": "Form is sent to",
+    "loginUrlHint": "On the target's own address.",
+    "usernameField": "Username field",
+    "passwordField": "Password field",
+    "username": "Username",
+    "password": "Password",
+    "loggedInRegex": "Signed in when the page contains",
+    "loggedInRegexHint": "A pattern only a signed-in page has, such as Sign out.",
+    "cancel": "Cancel",
+    "save": "Add login"
   }
 }

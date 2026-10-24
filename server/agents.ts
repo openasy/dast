@@ -6,6 +6,7 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import { DastError, type Dast } from "./dast.ts";
+import type { Keyring } from "./kek.ts";
 import { VERIFY_PATH } from "./verify.ts";
 
 export type Profile = "passive" | "standard" | "full";
@@ -45,10 +46,31 @@ export interface Job {
   status: "queued" | "running" | "done" | "failed";
   attempts: number;
   error: string | null;
+  /** The login the scan used, by name; null without one. */
+  authProfile: string | null;
   requestedBy: string;
   createdAt: string;
   finishedAt: string | null;
 }
+
+/** How a scan gets past a target's login. The secret is never part of it. */
+export interface AuthProfile {
+  id: string;
+  name: string;
+  kind: "header" | "form";
+  headerName: string | null;
+  loginUrl: string | null;
+  usernameField: string | null;
+  passwordField: string | null;
+  username: string | null;
+  loggedInRegex: string | null;
+  createdAt: string;
+}
+
+/** The login as the agent running the scan gets it: with its secret, and to nobody else. */
+export type WorkAuth =
+  | { kind: "header"; headerName: string; value: string }
+  | { kind: "form"; loginUrl: string; usernameField: string; passwordField: string; username: string; password: string; loggedInRegex: string };
 
 /** What an agent gets: the address, how hard it may test it, and nothing else about the install. */
 export interface Work {
@@ -58,9 +80,17 @@ export interface Work {
   profile: Profile | null;
   /** For verify: where the proof is. */
   proofUrl?: string;
+  auth?: WorkAuth;
 }
 
-export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level: "info" | "warn", msg: string, f?: Record<string, unknown>) => void } = {}) {
+const HEADER = /^[A-Za-z0-9-]{1,64}$/;
+const FIELD = /^[A-Za-z0-9_.[\]-]{1,64}$/;
+
+export function createAgents(
+  db: DatabaseSync,
+  dast: Dast,
+  opts: { keyring?: Keyring; log?: (level: "info" | "warn", msg: string, f?: Record<string, unknown>) => void } = {},
+) {
   const toAgent = (a: Record<string, string | null>): Agent => ({
     id: a.id!,
     name: a.name!,
@@ -78,6 +108,7 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
     status: j.status as Job["status"],
     attempts: j.attempts as number,
     error: (j.error as string | null) ?? null,
+    authProfile: (j.auth_name as string | null) ?? null,
     requestedBy: j.requested_by as string,
     createdAt: j.created_at as string,
     finishedAt: (j.finished_at as string | null) ?? null,
@@ -93,7 +124,8 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
     return (
       db
         .prepare(
-          `SELECT j.*, t.name AS target_name FROM scan_jobs j JOIN targets t ON t.id = j.target_id
+          `SELECT j.*, t.name AS target_name, a.name AS auth_name FROM scan_jobs j JOIN targets t ON t.id = j.target_id
+           LEFT JOIN auth_profiles a ON a.id = j.auth_profile_id
            ${filter.targetId ? "WHERE j.target_id = ?" : ""} ORDER BY j.created_at DESC, j.rowid DESC LIMIT 200`,
         )
         .all(...(filter.targetId ? [filter.targetId] : [])) as Array<Record<string, string | number | null>>
@@ -107,28 +139,120 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
     return want;
   }
 
-  function queue(targetId: string, kind: "scan" | "verify", profile: Profile | null, by: string): Job {
+  function queue(targetId: string, kind: "scan" | "verify", profile: Profile | null, by: string, authProfileId: string | null = null): Job {
     // One waiting job per target and kind: asking again does not pile up scans.
     const waiting = db.prepare("SELECT id FROM scan_jobs WHERE target_id = ? AND kind = ? AND status = 'queued'").get(targetId, kind) as
       { id: string } | undefined;
     if (waiting) {
-      db.prepare("UPDATE scan_jobs SET profile = ?, requested_by = ? WHERE id = ?").run(profile, by, waiting.id);
+      db.prepare("UPDATE scan_jobs SET profile = ?, requested_by = ?, auth_profile_id = ? WHERE id = ?").run(profile, by, authProfileId, waiting.id);
       return listJobs({ targetId }).find((j) => j.id === waiting.id)!;
     }
     const id = randomUUID();
-    db.prepare("INSERT INTO scan_jobs (id, target_id, kind, profile, status, requested_by, created_at) VALUES (?, ?, ?, ?, 'queued', ?, ?)").run(
-      id,
-      targetId,
-      kind,
-      profile,
-      by,
-      now(),
-    );
+    db.prepare(
+      "INSERT INTO scan_jobs (id, target_id, kind, profile, status, requested_by, created_at, auth_profile_id) VALUES (?, ?, ?, ?, 'queued', ?, ?, ?)",
+    ).run(id, targetId, kind, profile, by, now(), authProfileId);
     return listJobs({ targetId }).find((j) => j.id === id)!;
   }
 
+  const toProfile = (a: Record<string, string | null>): AuthProfile => ({
+    id: a.id!,
+    name: a.name!,
+    kind: a.kind as AuthProfile["kind"],
+    headerName: a.header_name ?? null,
+    loginUrl: a.login_url ?? null,
+    usernameField: a.username_field ?? null,
+    passwordField: a.password_field ?? null,
+    username: a.username ?? null,
+    loggedInRegex: a.logged_in_regex ?? null,
+    createdAt: a.created_at!,
+  });
+
+  function listAuthProfiles(targetId: string): AuthProfile[] {
+    target(targetId);
+    return (db.prepare("SELECT * FROM auth_profiles WHERE target_id = ? ORDER BY name").all(targetId) as Array<Record<string, string | null>>).map(toProfile);
+  }
+
+  /**
+   * Adds a login: a header sent with every request, or a form ZAP fills in. The login page must be on the target's
+   * origin, so a scan never sends its password anywhere else.
+   */
+  function createAuthProfile(targetId: string, body: Record<string, unknown>): AuthProfile {
+    const t = target(targetId);
+    if (!opts.keyring) throw new DastError(503, "not-configured", "Mount openasy-kek: a login's secret is kept only sealed (ADR 0021).");
+    const str = (k: string, max = 256) => (typeof body[k] === "string" && (body[k] as string).length <= max ? (body[k] as string) : "");
+    const name = str("name", 64).trim();
+    if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) throw bad("name is up to 64 letters, digits, spaces, . _ and -.");
+    if (db.prepare("SELECT 1 FROM auth_profiles WHERE target_id = ? AND name = ?").get(targetId, name))
+      throw new DastError(409, "conflict", `This target has a login named ${name}.`);
+    const id = randomUUID();
+    if (body.kind === "header") {
+      const headerName = str("headerName", 64);
+      const value = str("value", 4096);
+      if (!HEADER.test(headerName)) throw bad("headerName is a header name, such as Authorization.");
+      if (!value || /[\r\n]/.test(value)) throw bad("value is the header's value, on one line.");
+      db.prepare("INSERT INTO auth_profiles (id, target_id, name, kind, header_name, secret, created_at) VALUES (?, ?, ?, 'header', ?, ?, ?)").run(
+        id,
+        targetId,
+        name,
+        headerName,
+        opts.keyring.seal(value),
+        now(),
+      );
+    } else if (body.kind === "form") {
+      const loginUrl = str("loginUrl", 2048);
+      let login: URL;
+      try {
+        login = new URL(loginUrl);
+      } catch {
+        throw bad("loginUrl is the address the login form is sent to.");
+      }
+      if (login.origin !== new URL(t.url as string).origin) throw bad("loginUrl must be on the target's own origin.");
+      const usernameField = str("usernameField", 64);
+      const passwordField = str("passwordField", 64);
+      if (!FIELD.test(usernameField) || !FIELD.test(passwordField)) throw bad("usernameField and passwordField are the form's field names.");
+      const username = str("username");
+      const password = str("password", 1024);
+      if (!username || !password) throw bad("username and password are required.");
+      const loggedInRegex = str("loggedInRegex", 256);
+      try {
+        if (!loggedInRegex) throw new Error();
+        new RegExp(loggedInRegex);
+      } catch {
+        throw bad("loggedInRegex is a pattern only a signed-in page contains, such as Sign out.");
+      }
+      db.prepare(
+        `INSERT INTO auth_profiles (id, target_id, name, kind, login_url, username_field, password_field, username, logged_in_regex, secret, created_at)
+         VALUES (?, ?, ?, 'form', ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(id, targetId, name, login.href, usernameField, passwordField, username, loggedInRegex, opts.keyring.seal(password), now());
+    } else throw bad("kind is header or form.");
+    return toProfile(db.prepare("SELECT * FROM auth_profiles WHERE id = ?").get(id) as Record<string, string | null>);
+  }
+
+  function deleteAuthProfile(targetId: string, id: string) {
+    if (db.prepare("DELETE FROM auth_profiles WHERE id = ? AND target_id = ?").run(id, targetId).changes === 0) throw notFound("The login");
+  }
+
+  /** The login a job uses, with its secret, for the agent that runs it. */
+  function workAuth(authProfileId: string | null): WorkAuth | undefined {
+    if (!authProfileId || !opts.keyring) return undefined;
+    const a = db.prepare("SELECT * FROM auth_profiles WHERE id = ?").get(authProfileId) as Record<string, string> | undefined;
+    if (!a) return undefined;
+    const secret = opts.keyring.open(a.secret!).toString("utf8");
+    return a.kind === "header"
+      ? { kind: "header", headerName: a.header_name!, value: secret }
+      : {
+          kind: "form",
+          loginUrl: a.login_url!,
+          usernameField: a.username_field!,
+          passwordField: a.password_field!,
+          username: a.username!,
+          password: secret,
+          loggedInRegex: a.logged_in_regex!,
+        };
+  }
+
   /** Starts a scan by hand. Asking for more than the target allows is refused, so nobody is surprised. */
-  function scanNow(targetId: string, body: { profile?: unknown }, by: string, admin: boolean): Job {
+  function scanNow(targetId: string, body: { profile?: unknown; authProfile?: unknown }, by: string, admin: boolean): Job {
     const t = target(targetId);
     const profile = (body.profile ?? "standard") as Profile;
     if (!PROFILES.includes(profile)) throw bad(`profile is one of ${PROFILES.join(", ")}.`);
@@ -136,7 +260,13 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
       throw new DastError(409, "conflict", "Verify the target first: until then only a passive scan runs, which sends no attacks.");
     if (profile === "full" && t.production === 1 && !admin)
       throw new DastError(403, "forbidden", "A full scan of a production target needs an admin: it sends every attack ZAP and Nuclei have.");
-    return queue(targetId, "scan", profile, by);
+    let authProfileId: string | null = null;
+    if (body.authProfile !== undefined && body.authProfile !== null) {
+      const a = db.prepare("SELECT id FROM auth_profiles WHERE id = ? AND target_id = ?").get(String(body.authProfile), targetId) as { id: string } | undefined;
+      if (!a) throw bad("authProfile is the id of one of this target's logins.");
+      authProfileId = a.id;
+    }
+    return queue(targetId, "scan", profile, by, authProfileId);
   }
 
   /** A target's schedule; the scan it queues is limited by what the target allows when it runs. */
@@ -258,6 +388,7 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
           target: { name: job.name as string, url: job.url as string, production: job.production === 1 },
           profile,
           ...(job.kind === "verify" && { proofUrl: new URL(VERIFY_PATH, job.url as string).href }),
+          ...(job.kind === "scan" && job.auth_profile_id && { auth: workAuth(job.auth_profile_id as string) }),
         },
       ],
     };
@@ -304,7 +435,26 @@ export function createAgents(db: DatabaseSync, dast: Dast, opts: { log?: (level:
     }
   }
 
-  return { listJobs, scanNow, setSchedule, tick, queueVerify, listAgents, createAgent, deleteAgent, enroll, agentBySecret, work, report, finish, fail, proof };
+  return {
+    listJobs,
+    listAuthProfiles,
+    createAuthProfile,
+    deleteAuthProfile,
+    scanNow,
+    setSchedule,
+    tick,
+    queueVerify,
+    listAgents,
+    createAgent,
+    deleteAgent,
+    enroll,
+    agentBySecret,
+    work,
+    report,
+    finish,
+    fail,
+    proof,
+  };
 }
 
 export type Agents = ReturnType<typeof createAgents>;

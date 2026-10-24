@@ -280,6 +280,25 @@ export function createApp({
       auth: "editor",
       handle: async ({ res, params, body, actor, isAdmin }) => json(res, 201, agents.scanNow(params[0]!, await body(), actor(), isAdmin())),
     },
+    // Logins for scans behind a sign-in page; the secret is never sent back (ADR 0037).
+    {
+      method: "GET",
+      path: "/api/v1/targets/:id/auth-profiles",
+      auth: "viewer",
+      handle: ({ params }) => ({ authProfiles: agents.listAuthProfiles(params[0]!) }),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/targets/:id/auth-profiles",
+      auth: "admin",
+      handle: async ({ res, params, body }) => json(res, 201, agents.createAuthProfile(params[0]!, await body())),
+    },
+    {
+      method: "DELETE",
+      path: "/api/v1/targets/:id/auth-profiles/:profile",
+      auth: "admin",
+      handle: ({ res, params }) => (agents.deleteAuthProfile(params[0]!, params[1]!), noContent(res)),
+    },
     {
       method: "GET",
       path: "/api/v1/jobs",

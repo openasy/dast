@@ -619,6 +619,180 @@
         }
       }
     },
+    "/api/v1/targets/{id}/auth-profiles": {
+      "get": {
+        "operationId": "listAuthProfiles",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List a target's logins",
+        "description": "Without their secrets, so anyone who starts scans can pick one.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The logins, without their secrets.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProfileList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAuthProfile",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Add a login",
+        "description": "The secret, a header value or a password, is sealed with openasy-kek, never sent back, and given only to the agent running a scan that uses it. ZAP uses both kinds; Nuclei sends a header login, and runs without a form login. 503 without openasy-kek. Needs the admin role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAuthProfile"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthProfile"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/targets/{id}/auth-profiles/{profile}": {
+      "delete": {
+        "operationId": "deleteAuthProfile",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Remove a login",
+        "description": "Scans that used it keep their findings. Needs the admin role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "The target's id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "profile",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
     "/api/v1/targets/{id}/scans": {
       "get": {
         "operationId": "listTargetScans",
@@ -2497,6 +2671,7 @@
           "status",
           "attempts",
           "error",
+          "authProfile",
           "requestedBy",
           "createdAt",
           "finishedAt"
@@ -2556,6 +2731,13 @@
               "null"
             ]
           },
+          "authProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The login the scan used, by name."
+          },
           "requestedBy": {
             "type": "string",
             "description": "Who started it, or schedule."
@@ -2594,6 +2776,13 @@
         "properties": {
           "profile": {
             "$ref": "#/components/schemas/Profile"
+          },
+          "authProfile": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The id of one of the target's logins, for a scan behind its sign-in page."
           }
         }
       },
@@ -2785,6 +2974,67 @@
                 "proofUrl": {
                   "type": "string",
                   "description": "For verify: where the proof is."
+                },
+                "auth": {
+                  "description": "The login, with its secret, for this job only.",
+                  "oneOf": [
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "headerName",
+                        "value"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "header"
+                        },
+                        "headerName": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "kind",
+                        "loginUrl",
+                        "usernameField",
+                        "passwordField",
+                        "username",
+                        "password",
+                        "loggedInRegex"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "const": "form"
+                        },
+                        "loginUrl": {
+                          "type": "string"
+                        },
+                        "usernameField": {
+                          "type": "string"
+                        },
+                        "passwordField": {
+                          "type": "string"
+                        },
+                        "username": {
+                          "type": "string"
+                        },
+                        "password": {
+                          "type": "string"
+                        },
+                        "loggedInRegex": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  ]
                 }
               }
             }
@@ -2809,6 +3059,139 @@
           "content": {
             "type": "string",
             "maxLength": 256
+          }
+        }
+      },
+      "AuthProfile": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "kind",
+          "headerName",
+          "loginUrl",
+          "usernameField",
+          "passwordField",
+          "username",
+          "loggedInRegex",
+          "createdAt"
+        ],
+        "description": "How a scan gets past the target's login. The secret is never sent back.",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "header",
+              "form"
+            ]
+          },
+          "headerName": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "loginUrl": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "usernameField": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "passwordField": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "username": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "loggedInRegex": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AuthProfileList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "authProfiles"
+        ],
+        "properties": {
+          "authProfiles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AuthProfile"
+            }
+          }
+        }
+      },
+      "NewAuthProfile": {
+        "type": "object",
+        "required": [
+          "name",
+          "kind"
+        ],
+        "description": "header: headerName and value, sent with every request. form: loginUrl on the target's origin, usernameField, passwordField, username, password, and loggedInRegex, a pattern only a signed-in page contains.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "header",
+              "form"
+            ]
+          },
+          "headerName": {
+            "type": "string"
+          },
+          "value": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "loginUrl": {
+            "type": "string"
+          },
+          "usernameField": {
+            "type": "string"
+          },
+          "passwordField": {
+            "type": "string"
+          },
+          "username": {
+            "type": "string"
+          },
+          "password": {
+            "type": "string",
+            "writeOnly": true
+          },
+          "loggedInRegex": {
+            "type": "string"
           }
         }
       }

@@ -147,6 +147,32 @@ describe("responses match openapi.json", () => {
     await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "max" }), `/api/v1/targets/${target}/scan`);
     await call("POST", "/api/v1/targets/{id}/scan", admin({}), "/api/v1/targets/missing/scan");
     await call("POST", "/api/v1/targets/{id}/scan", { method: "POST" }, `/api/v1/targets/${target}/scan`);
+    const login = (
+      await call(
+        "POST",
+        "/api/v1/targets/{id}/auth-profiles",
+        admin({ name: "api", kind: "header", headerName: "Authorization", value: "Bearer s3cret" }),
+        `/api/v1/targets/${target}/auth-profiles`,
+      )
+    ).body as { id: string };
+    await call(
+      "POST",
+      "/api/v1/targets/{id}/auth-profiles",
+      admin({ name: "api", kind: "header", headerName: "X", value: "y" }),
+      `/api/v1/targets/${target}/auth-profiles`,
+    );
+    await call(
+      "POST",
+      "/api/v1/targets/{id}/auth-profiles",
+      admin({ name: "web", kind: "form", loginUrl: "https://evil.example.com/login" }),
+      `/api/v1/targets/${target}/auth-profiles`,
+    );
+    await call("POST", "/api/v1/targets/{id}/auth-profiles", admin({ name: "x", kind: "header" }), "/api/v1/targets/missing/auth-profiles");
+    await call("POST", "/api/v1/targets/{id}/auth-profiles", {}, `/api/v1/targets/${target}/auth-profiles`);
+    await call("GET", "/api/v1/targets/{id}/auth-profiles", admin(), `/api/v1/targets/${target}/auth-profiles`);
+    await call("GET", "/api/v1/targets/{id}/auth-profiles", admin(), "/api/v1/targets/missing/auth-profiles");
+    await call("GET", "/api/v1/targets/{id}/auth-profiles", {}, `/api/v1/targets/${target}/auth-profiles`);
+    await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "standard", authProfile: login.id }), `/api/v1/targets/${target}/scan`);
     await call("GET", "/api/v1/jobs", admin());
     await call("GET", "/api/v1/jobs", admin(), `/api/v1/jobs?target=${target}`);
     await call("GET", "/api/v1/jobs", {});
@@ -175,6 +201,8 @@ describe("responses match openapi.json", () => {
     await call("POST", "/api/v1/agent/jobs/{id}/done", agent({}), at("done"));
     await call("POST", "/api/v1/agent/jobs/{id}/failed", agent({ error: "late" }), at("failed"));
     await call("POST", "/api/v1/agent/jobs/{id}/sarif", agent(report("b")), `${at("sarif")}?engine=zap`);
+    await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), `/api/v1/targets/${target}/auth-profiles/${login.id}`);
+    await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), `/api/v1/targets/${target}/auth-profiles/${login.id}`);
     await call("DELETE", "/api/v1/agents/{id}", admin(), `/api/v1/agents/${made.agent.id}`);
     await call("DELETE", "/api/v1/agents/{id}", admin(), "/api/v1/agents/missing");
   });

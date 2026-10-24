@@ -27,6 +27,9 @@ a target's page or give the target a schedule. dast itself holds no scanner and 
   when it runs.
 - **One report per engine and profile**, such as `zap-standard` or `nuclei-full`, so a passive scan never marks what an
   active one found as fixed.
+- **Logins** let a scan get past the target's sign-in page: a header sent with every request, or a form ZAP fills in.
+  The secret is sealed with `openasy-kek`, never sent back, and given only to the agent running a scan that uses it.
+  Nuclei uses a header login and runs signed out with a form login. A form must be sent to the target's own origin.
 - **Agents** enrol with a one-time token from Agents and ask for jobs; a job an agent does not finish within 3 hours goes
   back to the queue, three times at most. A target on a private address is verified by an agent in its network.
 

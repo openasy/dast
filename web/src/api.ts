@@ -37,6 +37,20 @@ export interface Target {
   nextScanAt: string | null;
 }
 
+/** How a scan gets past the target's login; the secret never comes back. */
+export interface AuthProfile {
+  id: string;
+  name: string;
+  kind: "header" | "form";
+  headerName: string | null;
+  loginUrl: string | null;
+  usernameField: string | null;
+  passwordField: string | null;
+  username: string | null;
+  loggedInRegex: string | null;
+  createdAt: string;
+}
+
 /** passive sends no attacks; standard and full need a verified target (ADR 0037). */
 export type Profile = "passive" | "standard" | "full";
 export type Schedule = "none" | "daily" | "weekly";
@@ -58,6 +72,7 @@ export interface Job {
   status: "queued" | "running" | "done" | "failed";
   attempts: number;
   error: string | null;
+  authProfile: string | null;
   requestedBy: string;
   createdAt: string;
   finishedAt: string | null;

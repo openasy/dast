@@ -86,6 +86,59 @@ describe("scans run by dast-agent (ADR 0037)", () => {
     expect(app.agents.listJobs({ targetId: shopId })[0]).toMatchObject({ status: "failed", error: "ZAP could not reach the target" });
   });
 
+  it("sends a login's secret only to the agent running a scan that uses it, and never back to people", async () => {
+    const add = (body: unknown) => post(`/api/v1/targets/${shopId}/auth-profiles`, body);
+    expect(
+      (
+        await add({
+          name: "web",
+          kind: "form",
+          loginUrl: "https://evil.example.com/login",
+          usernameField: "u",
+          passwordField: "p",
+          username: "a",
+          password: "b",
+          loggedInRegex: "Sign out",
+        })
+      ).status,
+    ).toBe(422);
+    const form = await json(
+      await add({
+        name: "web",
+        kind: "form",
+        loginUrl: `${shop}/login`,
+        usernameField: "email",
+        passwordField: "password",
+        username: "scan@example.com",
+        password: "hunter22",
+        loggedInRegex: "Sign out",
+      }),
+    );
+    expect(form).toMatchObject({ kind: "form", username: "scan@example.com", loginUrl: `${shop}/login` });
+    expect(JSON.stringify(form)).not.toContain("hunter22");
+    expect(JSON.stringify(app.db.prepare("SELECT * FROM auth_profiles").all())).not.toContain("hunter22");
+    const header = await json(await add({ name: "api", kind: "header", headerName: "Authorization", value: "Bearer t0ken" }));
+    expect(JSON.stringify(await json(await app.admin(`/api/v1/targets/${shopId}/auth-profiles`)))).not.toContain("t0ken");
+
+    app.agents.scanNow(shopId, { profile: "standard", authProfile: form.id }, "admin@example.com", true);
+    const [job] = await work();
+    expect(job!.auth).toEqual({
+      kind: "form",
+      loginUrl: `${shop}/login`,
+      usernameField: "email",
+      passwordField: "password",
+      username: "scan@example.com",
+      password: "hunter22",
+      loggedInRegex: "Sign out",
+    });
+    expect(app.agents.listJobs({ targetId: shopId })[0]).toMatchObject({ authProfile: "web" });
+    await agent(`/api/v1/agent/jobs/${job!.id}/done`);
+    app.agents.scanNow(shopId, { profile: "standard", authProfile: header.id }, "admin@example.com", true);
+    expect((await work())[0]!.auth).toEqual({ kind: "header", headerName: "Authorization", value: "Bearer t0ken" });
+    // A login of another target is refused.
+    expect(() => app.agents.scanNow(intranetId || shopId, { authProfile: "nope" }, "admin@example.com", true)).toThrow(/logins/);
+  });
+
   it("has an agent read the proof of a target on a private address", async () => {
     const t = await json(await post("/api/v1/targets", { name: "intranet", url: intranet }));
     intranetId = t.id;

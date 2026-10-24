@@ -5,6 +5,7 @@ import type { AddressInfo } from "node:net";
 import { createApp, type AppOptions } from "./app.ts";
 import { openDb } from "./db.ts";
 import { createAgents } from "./agents.ts";
+import { createKeyring } from "./kek.ts";
 import { createDast } from "./dast.ts";
 import type { Verifier } from "./verify.ts";
 
@@ -67,7 +68,7 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   const base = `http://localhost:${(server.address() as AddressInfo).port}`;
   const auth = createAuth({ db, product: "dast", productName: "OpenAsy DAST", origin: base });
   const { site: _site, ...rest } = opts;
-  const agents = createAgents(db, dast);
+  const agents = createAgents(db, dast, { keyring: createKeyring(Buffer.alloc(32, 9)) });
   handler = createApp({ db, dast, agents, auth, ingestToken: INGEST_TOKEN, adminToken: ADMIN_TOKEN, ...rest });
   const as =
     (token: string) =>

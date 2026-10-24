@@ -35,6 +35,7 @@ import {
   MfaSetupRequired,
   Unauthorized,
   type Agent,
+  type AuthProfile,
   type FailOn,
   type Job,
   type Profile,
@@ -716,6 +717,7 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
         </Panel>
       )}
       {target && <AgentScans key={`${target.verified}`} call={call} target={target} onChanged={load} />}
+      {target && can("admin") && <TargetLogins call={call} target={target} />}
       <FindingsTable call={call} targetId={id} summary={target ?? undefined} reload={() => (load(), reload())} />
       <Panel title={msg("targetPage.reports")} flush>
         <DataTable
@@ -743,7 +745,18 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
   const [schedule, setSchedule] = useState<Schedule>(target.schedule);
   const [scheduleProfile, setScheduleProfile] = useState<Profile>(target.scheduleProfile);
   const [jobs, setJobs] = useState<Job[]>();
+  const [logins, setLogins] = useState<AuthProfile[]>([]);
+  const [login, setLogin] = useState("");
   const [error, setError] = useState<string>();
+  const loadLogins = useCallback(
+    () =>
+      void call<{ authProfiles: AuthProfile[] }>(`/api/v1/targets/${target.id}/auth-profiles`).then(
+        (r) => setLogins(r.authProfiles),
+        () => setLogins([]),
+      ),
+    [call, target.id],
+  );
+  useEffect(loadLogins, [loadLogins]);
   const loadJobs = useCallback(
     () =>
       void call<{ jobs: Job[] }>(`/api/v1/jobs?target=${target.id}`).then(
@@ -764,7 +777,7 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
     }));
   const start = async () => {
     try {
-      await call(`/api/v1/targets/${target.id}/scan`, { method: "POST", body: JSON.stringify({ profile }) });
+      await call(`/api/v1/targets/${target.id}/scan`, { method: "POST", body: JSON.stringify({ profile, authProfile: login || null }) });
       setError(undefined);
       loadJobs();
     } catch (err) {
@@ -802,7 +815,12 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
     {
       id: "by",
       header: msg("agentScans.by"),
-      cell: (j) => <span className="text-xs">{j.requestedBy === "schedule" ? msg("agentScans.schedule") : j.requestedBy}</span>,
+      cell: (j) => (
+        <span className="text-xs">
+          {j.requestedBy === "schedule" ? msg("agentScans.schedule") : j.requestedBy}
+          {j.authProfile ? `, ${msg("agentScans.as", { login: j.authProfile })}` : ""}
+        </span>
+      ),
     },
   ];
   return (
@@ -815,6 +833,12 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
               value={profile}
               onChange={(e) => setProfile(e.target.value as Profile)}
               options={profiles(target.verified)}
+            />
+            <SelectField
+              label={msg("agentScans.login")}
+              value={login}
+              onChange={(e) => setLogin(e.target.value)}
+              options={[{ value: "", label: msg("agentScans.noLogin") }, ...logins.map((l) => ({ value: l.id, label: l.name }))]}
             />
             <Button variant="primary" icon={<Play />} onClick={() => void start()}>
               {msg("agentScans.scanNow")}
@@ -856,6 +880,140 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
       </div>
     </Panel>
   );
+}
+
+/** The target's logins, for scans behind its sign-in page. Secrets go in and never come back (ADR 0037). */
+function AuthProfiles({ call, target, profiles, onChanged }: { call: Call; target: Target; profiles: AuthProfile[]; onChanged: () => void }) {
+  const msg = useT();
+  const [adding, setAdding] = useState(false);
+  const [kind, setKind] = useState<"header" | "form">("header");
+  const [form, setForm] = useState<Record<string, string>>({});
+  const [error, setError] = useState<string>();
+  const field = (k: string) => ({ value: form[k] ?? "", onChange: (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value })) });
+  const close = () => (setAdding(false), setForm({}), setError(undefined));
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      await call(`/api/v1/targets/${target.id}/auth-profiles`, { method: "POST", body: JSON.stringify({ ...form, kind }) });
+      close();
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const remove = (p: AuthProfile) => call(`/api/v1/targets/${target.id}/auth-profiles/${p.id}`, { method: "DELETE" }).then(onChanged, () => {});
+  const columns: Column<AuthProfile>[] = [
+    { id: "name", header: msg("authProfiles.name"), cell: (p) => <span className="font-medium">{p.name}</span> },
+    { id: "kind", header: msg("authProfiles.kind"), cell: (p) => <Badge>{msg(`authProfiles.kinds.${p.kind}`)}</Badge> },
+    {
+      id: "how",
+      header: msg("authProfiles.how"),
+      cell: (p) => <span className="dast-wrap font-mono text-xs">{p.kind === "header" ? `${p.headerName}: ••••` : `${p.username} @ ${p.loginUrl}`}</span>,
+    },
+    {
+      id: "remove",
+      header: <span className="sr-only">{msg("authProfiles.actions")}</span>,
+      width: "56px",
+      cell: (p) => (
+        <IconButton label={msg("authProfiles.remove", { name: p.name })} size="sm" onClick={() => void remove(p)}>
+          <Trash2 />
+        </IconButton>
+      ),
+    },
+  ];
+  return (
+    <Panel
+      title={msg("authProfiles.title")}
+      description={msg("authProfiles.description")}
+      flush
+      actions={
+        <Button size="sm" icon={<Plus />} onClick={() => setAdding(true)}>
+          {msg("authProfiles.add")}
+        </Button>
+      }
+    >
+      <DataTable
+        label={msg("authProfiles.title")}
+        columns={columns}
+        rows={profiles}
+        getRowId={(p) => p.id}
+        minWidth={520}
+        empty={<EmptyState title={msg("authProfiles.none")}>{msg("authProfiles.noneDetail")}</EmptyState>}
+      />
+      <Dialog
+        open={adding}
+        onOpenChange={(open) => !open && close()}
+        title={msg("authProfiles.add")}
+        description={msg("authProfiles.addDescription")}
+        onSubmit={add}
+        footer={
+          <>
+            <Button type="button" onClick={close}>
+              {msg("authProfiles.cancel")}
+            </Button>
+            <Button type="submit" variant="primary">
+              {msg("authProfiles.save")}
+            </Button>
+          </>
+        }
+      >
+        <TextField label={msg("authProfiles.name")} {...field("name")} />
+        <SelectField
+          label={msg("authProfiles.kind")}
+          value={kind}
+          onChange={(e) => setKind(e.target.value as "header" | "form")}
+          options={[
+            { value: "header", label: msg("authProfiles.kinds.header") },
+            { value: "form", label: msg("authProfiles.kinds.form") },
+          ]}
+        />
+        {kind === "header" ? (
+          <>
+            <TextField label={msg("authProfiles.headerName")} placeholder="Authorization" mono {...field("headerName")} />
+            <TextField label={msg("authProfiles.value")} type="password" autoComplete="off" mono error={error} {...field("value")} />
+          </>
+        ) : (
+          <>
+            <TextField
+              label={msg("authProfiles.loginUrl")}
+              placeholder={`${target.url}/login`}
+              hint={msg("authProfiles.loginUrlHint")}
+              mono
+              {...field("loginUrl")}
+            />
+            <div className="grid gap-2 sm:grid-cols-2">
+              <TextField label={msg("authProfiles.usernameField")} placeholder="email" mono {...field("usernameField")} />
+              <TextField label={msg("authProfiles.passwordField")} placeholder="password" mono {...field("passwordField")} />
+              <TextField label={msg("authProfiles.username")} autoComplete="off" {...field("username")} />
+              <TextField label={msg("authProfiles.password")} type="password" autoComplete="off" {...field("password")} />
+            </div>
+            <TextField
+              label={msg("authProfiles.loggedInRegex")}
+              placeholder="Sign out"
+              hint={msg("authProfiles.loggedInRegexHint")}
+              error={error}
+              {...field("loggedInRegex")}
+            />
+          </>
+        )}
+      </Dialog>
+    </Panel>
+  );
+}
+
+/** Loads the target's logins for the panel above. */
+function TargetLogins({ call, target }: { call: Call; target: Target }) {
+  const [profiles, setProfiles] = useState<AuthProfile[]>([]);
+  const load = useCallback(
+    () =>
+      void call<{ authProfiles: AuthProfile[] }>(`/api/v1/targets/${target.id}/auth-profiles`).then(
+        (r) => setProfiles(r.authProfiles),
+        () => setProfiles([]),
+      ),
+    [call, target.id],
+  );
+  useEffect(load, [load]);
+  return <AuthProfiles call={call} target={target} profiles={profiles} onChanged={load} />;
 }
 
 // ---------------------------------------------------------------- Agents

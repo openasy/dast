@@ -7,6 +7,7 @@ import { log } from "./log.ts";
 import { parseProducts } from "./products.ts";
 import { createAgents } from "./agents.ts";
 import { createDast } from "./dast.ts";
+import { createKeyring } from "./kek.ts";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
 const port = Number(process.env.PORT ?? 8080);
@@ -25,6 +26,7 @@ const db = openDb(dbPath);
 // The address people open dast at, behind the TLS proxy (ADR 0026). Cookies, passkeys and OIDC redirects use it.
 const publicUrl = (process.env.DAST_PUBLIC_URL ?? `http://localhost:${port}`).replace(/\/$/, "");
 const secretsKeyFile = process.env.DAST_SECRETS_KEY_FILE ?? "/run/secrets/openasy-kek";
+const secretsKey = readSecretsKey(secretsKeyFile);
 const auth = createAuth({
   db,
   product: "dast",
@@ -34,12 +36,12 @@ const auth = createAuth({
   trustedOrigins: publicUrl.startsWith("http://localhost:") ? [publicUrl.replace("localhost", "127.0.0.1")] : [],
   passwords: process.env.DAST_PASSWORD_SIGN_IN !== "false",
   oidc: oidcFromEnv(process.env, "DAST_"),
-  secretsKey: readSecretsKey(secretsKeyFile),
+  secretsKey,
   // Audit log (ADR 0013): every sign-in, failure and change to members and tokens.
   onEvent: (event) => log(event.type === "sign-in-failed" ? "warn" : "info", "auth", { event }),
 });
 const dast = createDast(db, { retentionDays });
-const agents = createAgents(db, dast, { log });
+const agents = createAgents(db, dast, { keyring: secretsKey ? createKeyring(secretsKey) : undefined, log });
 const products = parseProducts(process.env.OPENASY_PRODUCTS);
 if (products.invalid.length) log("warn", "OPENASY_PRODUCTS: left out entries that are not id=https://address", { entries: products.invalid });
 const server = createServer(
