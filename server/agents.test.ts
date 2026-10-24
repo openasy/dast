@@ -42,7 +42,7 @@ describe("scans run by dast-agent (ADR 0037)", () => {
   });
 
   it("gives a target nobody has proven only a passive scan", async () => {
-    const t = await json(await post("/api/v1/targets", { name: "shop", url: shop }));
+    const t = await app.setTarget("shop", shop);
     shopId = t.id;
     expect((await post(`/api/v1/targets/${shopId}/scan`, { profile: "standard" })).status).toBe(409);
     expect(await json(await post(`/api/v1/targets/${shopId}/scan`, { profile: "passive" }))).toMatchObject({
@@ -75,7 +75,7 @@ describe("scans run by dast-agent (ADR 0037)", () => {
   });
 
   it("gives a full scan of a production target only to an admin", async () => {
-    await app.admin(`/api/v1/targets/${shopId}`, { method: "PATCH", body: JSON.stringify({ production: true }) });
+    await app.setTarget("shop", shop, { production: true });
     expect(() => app.agents.scanNow(shopId, { profile: "full" }, "editor@example.com", false)).toThrow(/needs an admin/);
     expect(app.agents.scanNow(shopId, { profile: "full" }, "admin@example.com", true)).toMatchObject({ profile: "full" });
     // One waiting scan per target: asking again changes it rather than adding another.
@@ -87,40 +87,29 @@ describe("scans run by dast-agent (ADR 0037)", () => {
   });
 
   it("sends a login's secret only to the agent running a scan that uses it, and never back to people", async () => {
-    const add = (body: unknown) => post(`/api/v1/targets/${shopId}/auth-profiles`, body);
-    expect(
-      (
-        await add({
-          name: "web",
-          kind: "form",
-          loginUrl: "https://evil.example.com/login",
-          usernameField: "u",
-          passwordField: "p",
-          username: "a",
-          password: "b",
-          loggedInRegex: "Sign out",
-        })
-      ).status,
-    ).toBe(422);
-    const form = await json(
-      await add({
-        name: "web",
-        kind: "form",
-        loginUrl: `${shop}/login`,
-        usernameField: "email",
-        passwordField: "password",
-        username: "scan@example.com",
-        password: "hunter22",
-        loggedInRegex: "Sign out",
-      }),
-    );
-    expect(form).toMatchObject({ kind: "form", username: "scan@example.com", loginUrl: `${shop}/login` });
-    expect(JSON.stringify(form)).not.toContain("hunter22");
+    const form = {
+      kind: "form",
+      url: `${shop}/login`,
+      usernameField: "email",
+      passwordField: "password",
+      username: "scan@example.com",
+      loggedIn: "Sign out (you)",
+      secret: "DAST_SHOP_PASSWORD",
+    };
+    // The file names the variable; the secret is only in the environment.
+    await app.setTarget("shop", shop, { production: true, login: form });
+    expect(app.fileWarnings()).toEqual(["shop: DAST_SHOP_PASSWORD is not set, so it is scanned without its login."]);
+    expect((await json(await app.admin(`/api/v1/targets/${shopId}/auth-profiles`))).authProfiles).toEqual([]);
+    await app.setTarget("shop", shop, { production: true, login: form }, { DAST_SHOP_PASSWORD: "hunter22" });
+    expect(app.fileWarnings()).toEqual([]);
+    const [login] = (await json(await app.admin(`/api/v1/targets/${shopId}/auth-profiles`))).authProfiles;
+    expect(login).toMatchObject({ name: "file", kind: "form", username: "scan@example.com", loginUrl: `${shop}/login` });
+    expect(JSON.stringify(login)).not.toContain("hunter22");
     expect(JSON.stringify(app.db.prepare("SELECT * FROM auth_profiles").all())).not.toContain("hunter22");
-    const header = await json(await add({ name: "api", kind: "header", headerName: "Authorization", value: "Bearer t0ken" }));
-    expect(JSON.stringify(await json(await app.admin(`/api/v1/targets/${shopId}/auth-profiles`)))).not.toContain("t0ken");
+    // It is changed in the file, not here.
+    expect((await app.admin(`/api/v1/targets/${shopId}/auth-profiles/${login.id}`, { method: "DELETE" })).status).toBe(409);
 
-    app.agents.scanNow(shopId, { profile: "standard", authProfile: form.id }, "admin@example.com", true);
+    app.agents.scanNow(shopId, { profile: "standard", authProfile: login.id }, "admin@example.com", true);
     const [job] = await work();
     expect(job!.auth).toEqual({
       kind: "form",
@@ -129,10 +118,21 @@ describe("scans run by dast-agent (ADR 0037)", () => {
       passwordField: "password",
       username: "scan@example.com",
       password: "hunter22",
-      loggedInRegex: "Sign out",
+      // The text the file names, matched as it is written.
+      loggedInRegex: "Sign out \\(you\\)",
     });
-    expect(app.agents.listJobs({ targetId: shopId })[0]).toMatchObject({ authProfile: "web" });
+    expect(app.agents.listJobs({ targetId: shopId })[0]).toMatchObject({ authProfile: "file" });
     await agent(`/api/v1/agent/jobs/${job!.id}/done`);
+    // Another kind of login in the file replaces it, under the same id.
+    await app.setTarget(
+      "shop",
+      shop,
+      { production: true, login: { kind: "header", header: "Authorization", secret: "DAST_SHOP_TOKEN" } },
+      { DAST_SHOP_TOKEN: "Bearer t0ken" },
+    );
+    const [header] = (await json(await app.admin(`/api/v1/targets/${shopId}/auth-profiles`))).authProfiles;
+    expect(header).toMatchObject({ id: login.id, kind: "header", headerName: "Authorization" });
+    expect(JSON.stringify(header)).not.toContain("t0ken");
     app.agents.scanNow(shopId, { profile: "standard", authProfile: header.id }, "admin@example.com", true);
     expect((await work())[0]!.auth).toEqual({ kind: "header", headerName: "Authorization", value: "Bearer t0ken" });
     // A login of another target is refused.
@@ -140,7 +140,7 @@ describe("scans run by dast-agent (ADR 0037)", () => {
   });
 
   it("has an agent read the proof of a target on a private address", async () => {
-    const t = await json(await post("/api/v1/targets", { name: "intranet", url: intranet }));
+    const t = await app.setTarget("intranet", intranet);
     intranetId = t.id;
     const res = await post(`/api/v1/targets/${intranetId}/verify`);
     expect(res.status).toBe(422);
@@ -152,15 +152,24 @@ describe("scans run by dast-agent (ADR 0037)", () => {
   });
 
   it("queues scheduled scans when their time comes, as far as the target allows", async () => {
-    const t = await json(await post("/api/v1/targets", { name: "blog", url: "https://blog.example.com" }));
-    const patched = await json(
-      await app.admin(`/api/v1/targets/${t.id}`, { method: "PATCH", body: JSON.stringify({ schedule: "daily", scheduleProfile: "full" }) }),
+    const t = await app.setTarget(
+      "blog",
+      "https://blog.example.com",
+      {
+        schedule: "daily",
+        profile: "full",
+        login: { kind: "header", header: "Authorization", secret: "DAST_BLOG_TOKEN" },
+      },
+      { DAST_BLOG_TOKEN: "Bearer blog" },
     );
-    expect(patched).toMatchObject({ schedule: "daily", scheduleProfile: "full", nextScanAt: expect.any(String) });
+    expect(t).toMatchObject({ schedule: "daily", scheduleProfile: "full", nextScanAt: expect.any(String) });
     app.db.prepare("UPDATE targets SET next_scan_at = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(t.id);
     app.agents.tick();
     // Not verified: the schedule asks for full, the target allows passive.
-    expect(app.agents.listJobs({ targetId: t.id })).toEqual([expect.objectContaining({ profile: "passive", requestedBy: "schedule", status: "queued" })]);
+    // A scheduled scan uses the login the file names.
+    expect(app.agents.listJobs({ targetId: t.id })).toEqual([
+      expect.objectContaining({ profile: "passive", requestedBy: "schedule", status: "queued", authProfile: "file" }),
+    ]);
     expect(Date.parse((await json(await app.admin(`/api/v1/targets/${t.id}`))).nextScanAt)).toBeGreaterThan(Date.now());
     app.agents.tick();
     expect(app.agents.listJobs({ targetId: t.id })).toHaveLength(1);

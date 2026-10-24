@@ -7,6 +7,7 @@ import { log } from "./log.ts";
 import { parseProducts } from "./products.ts";
 import { createAgents } from "./agents.ts";
 import { createDast } from "./dast.ts";
+import { watchEndpoints } from "./endpoints.ts";
 import { createKeyring } from "./kek.ts";
 
 const { version } = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string };
@@ -42,6 +43,16 @@ const auth = createAuth({
 });
 const dast = createDast(db, { retentionDays });
 const agents = createAgents(db, dast, { keyring: secretsKey ? createKeyring(secretsKey) : undefined, log });
+// The targets come from the install's endpoints file, the one Uptime and Certificates read (ADR 0052).
+const endpointsPath = process.env.OPENASY_ENDPOINTS;
+const endpoints = endpointsPath
+  ? watchEndpoints(endpointsPath, (list) => agents.syncFile(list), {
+      onChange: (s) =>
+        s.error
+          ? log("error", "endpoints file not applied; the targets from its last good version stay", { path: s.path, error: s.error })
+          : log(s.warnings.length ? "warn" : "info", "endpoints file applied", { path: s.path, entries: s.entries, warnings: s.warnings }),
+    })
+  : undefined;
 const products = parseProducts(process.env.OPENASY_PRODUCTS);
 if (products.invalid.length) log("warn", "OPENASY_PRODUCTS: left out entries that are not id=https://address", { entries: products.invalid });
 const server = createServer(
@@ -57,6 +68,7 @@ const server = createServer(
     openapi,
     serveMetrics: metricsPort === undefined,
     products: products.products,
+    endpointsFile: endpoints && (() => endpoints.state),
   }),
 );
 const metricsServer = metricsPort !== undefined ? createServer(createMetricsHandler(dast, version)) : undefined;
@@ -85,6 +97,7 @@ const timers: NodeJS.Timeout[] = [
 function shutdown(signal: string) {
   log("info", "shutting down", { signal });
   for (const t of timers) clearInterval(t);
+  endpoints?.stop();
   metricsServer?.close();
   server.close(() => {
     db.close();

@@ -2,7 +2,7 @@
   "openapi": "3.1.1",
   "info": {
     "title": "OpenAsy DAST API",
-    "version": "0.7.0",
+    "version": "0.8.0",
     "summary": "Findings from scans of running applications, on targets whose owner has proven they own them.",
     "description": "Every screen of dast uses this API, and so can your scripts and CI (ADR 0014). Within `/api/v1` changes are additive only; anything removed is deprecated first (ADR 0024). Errors use Problem Details (RFC 9457).\n\nSend SARIF 2.1.0 reports from ZAP, Nuclei or another scanner with `DAST_INGEST_TOKEN`. Everything else takes the session of a signed-in person or an API token, and each operation names the role it needs (`x-openasy-role`: viewer, editor, admin; ADR 0003).\n\nSign-in, members and API tokens are under `/api/v1/auth`, provided by [@openasy/auth](https://github.com/openasy/auth#routes).",
     "license": {
@@ -204,7 +204,7 @@
             "adminToken": []
           }
         ],
-        "description": "Needs the viewer role.",
+        "description": "Needs the viewer role. The targets come from the endpoints file (OPENASY_ENDPOINTS, ADR 0052): its entries with a dast block. No route adds or changes one.",
         "parameters": [
           {
             "name": "limit",
@@ -253,66 +253,6 @@
           }
         },
         "x-openasy-role": "viewer"
-      },
-      "post": {
-        "operationId": "createTarget",
-        "tags": [
-          "Targets"
-        ],
-        "summary": "Add a target",
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "apiToken": []
-          },
-          {
-            "adminToken": []
-          }
-        ],
-        "description": "An address that may be tested. Nothing is attacked until its owner has proven it is theirs (ADR 0037).\n\nNeeds the admin role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewTarget"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Created, not yet verified. Serve `verification.content` at `verification.url`, then ask for verification.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Target"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "x-openasy-role": "admin"
       }
     },
     "/api/v1/targets/{id}": {
@@ -371,77 +311,6 @@
         },
         "x-openasy-role": "viewer"
       },
-      "patch": {
-        "operationId": "updateTarget",
-        "tags": [
-          "Targets"
-        ],
-        "summary": "Change a target",
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "apiToken": []
-          },
-          {
-            "adminToken": []
-          }
-        ],
-        "description": "Marks it as production, which never gets a full scan without an admin's say, and sets the severity that fails a check.\n\nNeeds the admin role.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "The target's id.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/UpdateTarget"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "The target.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Target"
-                }
-              }
-            }
-          },
-          "400": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        },
-        "x-openasy-role": "admin"
-      },
       "delete": {
         "operationId": "deleteTarget",
         "tags": [
@@ -459,7 +328,7 @@
             "adminToken": []
           }
         ],
-        "description": "Deletes its reports, findings and decisions.\n\nNeeds the admin role.",
+        "description": "Only a target added in DAST before the endpoints file was the way in; one from the file answers 409 and is removed in the file. Its reports and findings go with it.\n\nNeeds the admin role.",
         "parameters": [
           {
             "name": "id",
@@ -482,6 +351,9 @@
             "$ref": "#/components/responses/Problem"
           },
           "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
             "$ref": "#/components/responses/Problem"
           },
           "503": {
@@ -667,76 +539,6 @@
             "$ref": "#/components/responses/Problem"
           }
         }
-      },
-      "post": {
-        "operationId": "createAuthProfile",
-        "tags": [
-          "Agents"
-        ],
-        "summary": "Add a login",
-        "description": "The secret, a header value or a password, is sealed with openasy-kek, never sent back, and given only to the agent running a scan that uses it. ZAP uses both kinds; Nuclei sends a header login, and runs without a form login. 503 without openasy-kek. Needs the admin role.",
-        "security": [
-          {
-            "session": []
-          },
-          {
-            "apiToken": []
-          },
-          {
-            "adminToken": []
-          }
-        ],
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "description": "The target's id.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/NewAuthProfile"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "Added.",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthProfile"
-                }
-              }
-            }
-          },
-          "401": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "403": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "404": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "409": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "422": {
-            "$ref": "#/components/responses/Problem"
-          },
-          "503": {
-            "$ref": "#/components/responses/Problem"
-          }
-        }
       }
     },
     "/api/v1/targets/{id}/auth-profiles/{profile}": {
@@ -746,7 +548,7 @@
           "Agents"
         ],
         "summary": "Remove a login",
-        "description": "Scans that used it keep their findings. Needs the admin role.",
+        "description": "Only a login of a target added before the endpoints file; a file target answers 409, as its login is in the file.\n\nNeeds the admin role.",
         "security": [
           {
             "session": []
@@ -788,6 +590,9 @@
             "$ref": "#/components/responses/Problem"
           },
           "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
             "$ref": "#/components/responses/Problem"
           }
         }
@@ -2125,7 +1930,8 @@
           "open",
           "suppressed",
           "failingChecks",
-          "lastScanAt"
+          "lastScanAt",
+          "endpointsFile"
         ],
         "additionalProperties": false,
         "properties": {
@@ -2156,6 +1962,17 @@
                 "format": "date-time"
               }
             ]
+          },
+          "endpointsFile": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/EndpointsFile"
+              }
+            ],
+            "description": "null when OPENASY_ENDPOINTS is not set."
           }
         }
       },
@@ -2176,7 +1993,8 @@
           "createdAt",
           "schedule",
           "scheduleProfile",
-          "nextScanAt"
+          "nextScanAt",
+          "source"
         ],
         "additionalProperties": false,
         "properties": {
@@ -2296,6 +2114,14 @@
             ],
             "format": "date-time",
             "description": "When the schedule queues the next scan."
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "ui",
+              "file"
+            ],
+            "description": "file: from the endpoints file (OPENASY_ENDPOINTS, ADR 0052). ui: added here before the file was the way in."
           }
         }
       },
@@ -2314,52 +2140,6 @@
           "nextCursor": {
             "type": "string",
             "description": "Pass the previous page's nextCursor to get the next page."
-          }
-        }
-      },
-      "NewTarget": {
-        "type": "object",
-        "required": [
-          "name",
-          "url"
-        ],
-        "additionalProperties": false,
-        "properties": {
-          "name": {
-            "type": "string",
-            "maxLength": 64,
-            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
-          },
-          "url": {
-            "type": "string",
-            "format": "uri"
-          },
-          "production": {
-            "type": "boolean",
-            "default": false
-          },
-          "failOn": {
-            "$ref": "#/components/schemas/FailOn",
-            "default": "high"
-          }
-        }
-      },
-      "UpdateTarget": {
-        "type": "object",
-        "additionalProperties": false,
-        "minProperties": 1,
-        "properties": {
-          "production": {
-            "type": "boolean"
-          },
-          "failOn": {
-            "$ref": "#/components/schemas/FailOn"
-          },
-          "schedule": {
-            "$ref": "#/components/schemas/Schedule"
-          },
-          "scheduleProfile": {
-            "$ref": "#/components/schemas/Profile"
           }
         }
       },
@@ -3149,49 +2929,53 @@
           }
         }
       },
-      "NewAuthProfile": {
+      "EndpointsFile": {
         "type": "object",
         "required": [
-          "name",
-          "kind"
+          "path",
+          "appliedAt",
+          "entries",
+          "error",
+          "warnings"
         ],
-        "description": "header: headerName and value, sent with every request. form: loginUrl on the target's origin, usernameField, passwordField, username, password, and loggedInRegex, a pattern only a signed-in page contains.",
+        "additionalProperties": false,
+        "description": "The endpoints file (ADR 0052). It is read again within a minute of a change; a file that cannot be applied leaves the checks from its last good version.",
         "properties": {
-          "name": {
+          "path": {
             "type": "string"
           },
-          "kind": {
-            "type": "string",
-            "enum": [
-              "header",
-              "form"
-            ]
+          "appliedAt": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string",
+                "format": "date-time"
+              }
+            ],
+            "description": "When it was last read and applied; null if it never was."
           },
-          "headerName": {
-            "type": "string"
+          "entries": {
+            "type": "integer"
           },
-          "value": {
-            "type": "string",
-            "writeOnly": true
+          "error": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "description": "Why the file on disk is not applied."
           },
-          "loginUrl": {
-            "type": "string"
-          },
-          "usernameField": {
-            "type": "string"
-          },
-          "passwordField": {
-            "type": "string"
-          },
-          "username": {
-            "type": "string"
-          },
-          "password": {
-            "type": "string",
-            "writeOnly": true
-          },
-          "loggedInRegex": {
-            "type": "string"
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "What to fix that did not stop the file from being applied."
           }
         }
       }

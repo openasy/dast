@@ -7,6 +7,7 @@ import { openDb } from "./db.ts";
 import { createAgents } from "./agents.ts";
 import { createKeyring } from "./kek.ts";
 import { createDast } from "./dast.ts";
+import { parseEndpoints } from "./endpoints.ts";
 import type { Verifier } from "./verify.ts";
 
 export const INGEST_TOKEN = "test-ingest-token";
@@ -78,6 +79,21 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   const ingest = as(INGEST_TOKEN);
   /** Sends a report the way CI does. */
   const scan = (query: Record<string, string>, body: string | Buffer) => ingest(`/api/v1/scans?${new URLSearchParams(query)}`, { method: "POST", body });
+  // Targets come from the endpoints file only (ADR 0052): each one a test adds is another entry in it, and the
+  // secrets its logins name are the environment the file is applied with.
+  const entries = new Map<string, Record<string, unknown>>();
+  const env: Record<string, string> = {};
+  let warnings: string[] = [];
+  const apply = () => (warnings = agents.syncFile(parseEndpoints(JSON.stringify({ endpoints: [...entries.values()] })), env));
+  /** Adds or changes the entry of a target, and returns the target as the API shows it. */
+  const setTarget = async (name: string, url: string, block: Record<string, unknown> = {}, secrets: Record<string, string> = {}) => {
+    entries.set(name, { name, url, dast: block });
+    Object.assign(env, secrets);
+    apply();
+    const row = db.prepare("SELECT id FROM targets WHERE name = ?").get(name) as { id: string };
+    return (await (await admin(`/api/v1/targets/${row.id}`)).json()) as Record<string, any> & { id: string };
+  };
+  const dropTarget = (name: string) => (entries.delete(name), apply());
   const close = () => new Promise<void>((resolve) => server.close(() => resolve()));
-  return { db, dast, agents, auth, base, admin, ingest, scan, site, close };
+  return { db, dast, agents, auth, base, admin, ingest, scan, site, setTarget, dropTarget, fileWarnings: () => warnings, close };
 }

@@ -1,0 +1,23 @@
+# The same file is in every product that reads OPENASY_ENDPOINTS (ADR 0052), so their tests read the same entries.
+endpoints:
+  - name: Website
+    url: https://www.example.com
+    group: Public
+    server: web-1
+    public: true
+    every: 1m
+    expect: { status: 200, text: Welcome }
+  - name: API
+    url: https://api.example.com:8443/health
+    server: web-1
+  - name: Mail
+    url: tls://mail.example.com:465
+    tags: [mail]
+  - name: Database
+    url: tcp://db.example.com:5432
+    server: db-1
+  - name: Resolver
+    url: dns://example.com
+    expect: { recordType: A }
+  - name: Old site
+    url: http://old.example.com

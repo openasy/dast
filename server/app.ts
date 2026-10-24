@@ -6,6 +6,7 @@ import type { DatabaseSync } from "node:sqlite";
 import { createGunzip } from "node:zlib";
 import { AuthError, mergeOpenApi, sendProblem, type Auth, type Role } from "@openasy/auth";
 import type { Agents } from "./agents.ts";
+import type { EndpointsFileState } from "./endpoints.ts";
 import { log } from "./log.ts";
 import { countRequest, renderMetrics } from "./metrics.ts";
 import type { ProductLink } from "./products.ts";
@@ -34,6 +35,8 @@ export interface AppOptions {
   serveMetrics?: boolean;
   /** The install's OpenAsy products and their addresses, from OPENASY_PRODUCTS, for the product switcher. */
   products?: ProductLink[];
+  /** Where the endpoints file stands, when OPENASY_ENDPOINTS names one (ADR 0052). */
+  endpointsFile?: () => EndpointsFileState;
 }
 
 function metricsText(dast: Dast, version: string) {
@@ -206,6 +209,7 @@ export function createApp({
   openapi,
   serveMetrics = true,
   products = [],
+  endpointsFile,
 }: AppOptions) {
   // The served description includes /api/v1/auth from @openasy/auth, so the API reference documents sign-in too.
   const spec = openapi && JSON.stringify({ ...mergeOpenApi(openapi), info: { ...(openapi.info as object), version } });
@@ -220,7 +224,7 @@ export function createApp({
   const routes: Route[] = [
     { method: "GET", path: "/api/v1/version", auth: "none", handle: () => ({ product: "dast", version }) },
     { method: "GET", path: "/api/v1/products", auth: "viewer", handle: () => ({ products }) },
-    { method: "GET", path: "/api/v1/summary", auth: "viewer", handle: () => dast.summary() },
+    { method: "GET", path: "/api/v1/summary", auth: "viewer", handle: () => ({ ...dast.summary(), endpointsFile: endpointsFile?.() ?? null }) },
 
     // Reports in, from CI or from whoever runs the scanner. The answer says whether the check passes.
     {
@@ -236,23 +240,7 @@ export function createApp({
 
     // Targets.
     { method: "GET", path: "/api/v1/targets", auth: "viewer", handle: ({ url }) => page("targets", dast.listTargets(cursor(url), limit(url))) },
-    { method: "POST", path: "/api/v1/targets", auth: "admin", handle: async ({ res, body }) => json(res, 201, dast.createTarget(await body())) },
     { method: "GET", path: "/api/v1/targets/:id", auth: "viewer", handle: ({ params }) => dast.target(params[0]!) },
-    {
-      method: "PATCH",
-      path: "/api/v1/targets/:id",
-      auth: "admin",
-      handle: async ({ params, body }) => {
-        const { schedule, scheduleProfile, ...rest } = await body();
-        if (schedule !== undefined || scheduleProfile !== undefined) {
-          dast.target(params[0]!);
-          agents.setSchedule(params[0]!, { schedule, scheduleProfile });
-          if (Object.keys(rest).length) dast.updateTarget(params[0]!, rest);
-          return dast.target(params[0]!);
-        }
-        return dast.updateTarget(params[0]!, rest);
-      },
-    },
     { method: "DELETE", path: "/api/v1/targets/:id", auth: "admin", handle: ({ res, params }) => (dast.deleteTarget(params[0]!), noContent(res)) },
     {
       method: "POST",
@@ -286,12 +274,6 @@ export function createApp({
       path: "/api/v1/targets/:id/auth-profiles",
       auth: "viewer",
       handle: ({ params }) => ({ authProfiles: agents.listAuthProfiles(params[0]!) }),
-    },
-    {
-      method: "POST",
-      path: "/api/v1/targets/:id/auth-profiles",
-      auth: "admin",
-      handle: async ({ res, params, body }) => json(res, 201, agents.createAuthProfile(params[0]!, await body())),
     },
     {
       method: "DELETE",

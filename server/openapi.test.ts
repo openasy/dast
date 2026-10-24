@@ -109,17 +109,16 @@ describe("responses match openapi.json", () => {
     await call("GET", "/metrics");
   });
 
-  it("targets: add, verify, change", async () => {
-    const created = (await call("POST", "/api/v1/targets", admin({ name: "shop-staging", url: shop }))).body as {
-      id: string;
-      verification: { content: string };
-    };
+  it("targets: read and verify", async () => {
+    // Targets come from the endpoints file only (ADR 0052), with the login's secret in the environment.
+    const created = await app.setTarget(
+      "shop-staging",
+      shop,
+      { schedule: "weekly", login: { kind: "header", header: "Authorization", secret: "DAST_SHOP_TOKEN" } },
+      { DAST_SHOP_TOKEN: "Bearer s3cret" },
+    );
     target = created.id;
     proof = created.verification.content;
-    await call("POST", "/api/v1/targets", admin({ name: "shop-staging", url: "https://other.example.com" }));
-    await call("POST", "/api/v1/targets", admin({ name: "x", url: "ftp://nope" }));
-    await call("POST", "/api/v1/targets", admin("nope"));
-    await call("POST", "/api/v1/targets", {});
     await call("GET", "/api/v1/targets", admin());
     await call("GET", "/api/v1/targets", admin(), "/api/v1/targets?limit=1");
     await call("GET", "/api/v1/targets", admin(), "/api/v1/targets?limit=0");
@@ -133,45 +132,21 @@ describe("responses match openapi.json", () => {
     );
     await call("POST", "/api/v1/targets/{id}/verify", admin(), "/api/v1/targets/missing/verify");
     await call("POST", "/api/v1/targets/{id}/verify", { method: "POST" }, `/api/v1/targets/${target}/verify`);
-    await call("PATCH", "/api/v1/targets/{id}", admin({ failOn: "critical", production: true }), `/api/v1/targets/${target}`);
-    await call("PATCH", "/api/v1/targets/{id}", admin({ failOn: "urgent" }), `/api/v1/targets/${target}`);
-    await call("PATCH", "/api/v1/targets/{id}", admin("nope"), `/api/v1/targets/${target}`);
-    await call("PATCH", "/api/v1/targets/{id}", admin({ failOn: "high" }), "/api/v1/targets/missing");
-    await call("PATCH", "/api/v1/targets/{id}", { method: "PATCH" }, `/api/v1/targets/${target}`);
   });
 
   it("agents, the queue and schedules", async () => {
-    await call("PATCH", "/api/v1/targets/{id}", admin({ schedule: "weekly", scheduleProfile: "standard" }), `/api/v1/targets/${target}`);
-    await call("PATCH", "/api/v1/targets/{id}", admin({ schedule: "hourly" }), `/api/v1/targets/${target}`);
     await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "standard" }), `/api/v1/targets/${target}/scan`);
     await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "max" }), `/api/v1/targets/${target}/scan`);
     await call("POST", "/api/v1/targets/{id}/scan", admin({}), "/api/v1/targets/missing/scan");
     await call("POST", "/api/v1/targets/{id}/scan", { method: "POST" }, `/api/v1/targets/${target}/scan`);
-    const login = (
-      await call(
-        "POST",
-        "/api/v1/targets/{id}/auth-profiles",
-        admin({ name: "api", kind: "header", headerName: "Authorization", value: "Bearer s3cret" }),
-        `/api/v1/targets/${target}/auth-profiles`,
-      )
-    ).body as { id: string };
-    await call(
-      "POST",
-      "/api/v1/targets/{id}/auth-profiles",
-      admin({ name: "api", kind: "header", headerName: "X", value: "y" }),
-      `/api/v1/targets/${target}/auth-profiles`,
-    );
-    await call(
-      "POST",
-      "/api/v1/targets/{id}/auth-profiles",
-      admin({ name: "web", kind: "form", loginUrl: "https://evil.example.com/login" }),
-      `/api/v1/targets/${target}/auth-profiles`,
-    );
-    await call("POST", "/api/v1/targets/{id}/auth-profiles", admin({ name: "x", kind: "header" }), "/api/v1/targets/missing/auth-profiles");
-    await call("POST", "/api/v1/targets/{id}/auth-profiles", {}, `/api/v1/targets/${target}/auth-profiles`);
     await call("GET", "/api/v1/targets/{id}/auth-profiles", admin(), `/api/v1/targets/${target}/auth-profiles`);
     await call("GET", "/api/v1/targets/{id}/auth-profiles", admin(), "/api/v1/targets/missing/auth-profiles");
     await call("GET", "/api/v1/targets/{id}/auth-profiles", {}, `/api/v1/targets/${target}/auth-profiles`);
+    const login = (
+      (await call("GET", "/api/v1/targets/{id}/auth-profiles", admin(), `/api/v1/targets/${target}/auth-profiles`)).body as {
+        authProfiles: Array<{ id: string }>;
+      }
+    ).authProfiles[0]!;
     await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "standard", authProfile: login.id }), `/api/v1/targets/${target}/scan`);
     await call("GET", "/api/v1/jobs", admin());
     await call("GET", "/api/v1/jobs", admin(), `/api/v1/jobs?target=${target}`);
@@ -202,7 +177,20 @@ describe("responses match openapi.json", () => {
     await call("POST", "/api/v1/agent/jobs/{id}/failed", agent({ error: "late" }), at("failed"));
     await call("POST", "/api/v1/agent/jobs/{id}/sarif", agent(report("b")), `${at("sarif")}?engine=zap`);
     await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), `/api/v1/targets/${target}/auth-profiles/${login.id}`);
-    await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), `/api/v1/targets/${target}/auth-profiles/${login.id}`);
+    // A login of a target added here before the file can still be removed here.
+    const at2 = new Date().toISOString();
+    app.db
+      .prepare(
+        "INSERT INTO targets (id, name, url, production, fail_on, verify_token, created_at) VALUES ('ui-t', 'legacy', 'https://legacy.example.com', 0, 'high', 'x', ?)",
+      )
+      .run(at2);
+    app.db
+      .prepare(
+        "INSERT INTO auth_profiles (id, target_id, name, kind, header_name, secret, created_at) VALUES ('ui-login', 'ui-t', 'api', 'header', 'X', 'sealed', ?)",
+      )
+      .run(at2);
+    await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), "/api/v1/targets/ui-t/auth-profiles/ui-login");
+    await call("DELETE", "/api/v1/targets/{id}/auth-profiles/{profile}", admin(), "/api/v1/targets/ui-t/auth-profiles/ui-login");
     await call("DELETE", "/api/v1/agents/{id}", admin(), `/api/v1/agents/${made.agent.id}`);
     await call("DELETE", "/api/v1/agents/{id}", admin(), "/api/v1/agents/missing");
   });
@@ -257,7 +245,8 @@ describe("responses match openapi.json", () => {
 
   it("deletes a target", async () => {
     await call("DELETE", "/api/v1/targets/{id}", admin(), `/api/v1/targets/${target}`);
-    await call("DELETE", "/api/v1/targets/{id}", admin(), `/api/v1/targets/${target}`);
+    await call("DELETE", "/api/v1/targets/{id}", admin(), "/api/v1/targets/ui-t");
+    await call("DELETE", "/api/v1/targets/{id}", admin(), "/api/v1/targets/ui-t");
     await call("DELETE", "/api/v1/targets/{id}", { method: "DELETE" }, "/api/v1/targets/x");
   });
 

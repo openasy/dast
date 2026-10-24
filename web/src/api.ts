@@ -17,12 +17,24 @@ export interface Summary {
   suppressed: number;
   failingChecks: number;
   lastScanAt: string | null;
+  endpointsFile: EndpointsFile | null;
+}
+
+/** Where the endpoints file stands, when OPENASY_ENDPOINTS names one (ADR 0052). */
+export interface EndpointsFile {
+  path: string;
+  appliedAt: string | null;
+  entries: number;
+  error: string | null;
+  warnings: string[];
 }
 
 export interface Target {
   id: string;
   name: string;
   url: string;
+  /** file: from the endpoints file (ADR 0052); ui: added here before it was the way in. */
+  source: "ui" | "file";
   production: boolean;
   failOn: FailOn;
   verified: boolean;

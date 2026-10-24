@@ -77,18 +77,15 @@
     "check": "Check",
     "targets": "Targets",
     "anAddressThatMayBe": "An address that may be tested. Nothing is attacked until its owner has proven it is theirs.",
-    "addTarget": "Add target",
     "noTargetsYet": "No targets yet",
-    "addTheAddressOfAn": "Add the address of an application you own.",
-    "anAdminAddsTheAddresses": "An admin adds the addresses that may be tested.",
-    "addATarget": "Add a target",
-    "youProveTheAddressIs": "You prove the address is yours next, by serving a short text from it.",
-    "cancel": "Cancel",
-    "name": "Name",
-    "lettersDigitsAndCiSends": "Letters, digits, . _ and -. CI sends reports by this name.",
-    "isItProduction": "Is it production?",
-    "noStagingOrTest": "No, staging or test",
-    "yesNeverGivenAFull": "Yes: never given a full scan without an admin's say"
+    "notInTheFile": "Not in the file",
+    "addedHereBefore_one": "{{count}} target was added here before the file",
+    "addedHereBefore_other": "{{count}} targets were added here before the file",
+    "copyTheseIntoTheEndpointsFile": "They keep being scanned. Copy these lines into the endpoints file, with each one's login if it has one: once an entry has the same name or address, it takes the target over with its reports, findings and proof.",
+    "theyComeFromTheEndpointsFile": "Targets come from the endpoints file the install keeps, the one Uptime and Certificates read too: set OPENASY_ENDPOINTS to it. An entry with a dast block is a target, and a login names the variable in .env that holds its secret, such as:",
+    "theEndpointsFileIsNot": "The endpoints file is not applied",
+    "theTargetsFromItsLast": "{{error}} The targets from its last good version stay until it is fixed ({{path}}).",
+    "theEndpointsFileHasSomething": "The endpoints file has something to fix"
   },
   "targetPage": {
     "targetNotFound": "Target not found",
@@ -112,21 +109,22 @@
     "production": "Production",
     "noStagingOrTest": "No, staging or test",
     "yesNoFullScans": "Yes: no full scans",
-    "savePolicy": "Save policy",
     "deleteTarget": "Delete target",
     "delete": "Delete {{name}}?",
-    "itsReportsFindingsAndDecisions": "Its reports, findings and decisions are deleted. You would add and verify it again to test it.",
+    "itsReportsFindingsAndDecisions": "Its reports, findings and decisions are deleted. To test it again, list it in the endpoints file and verify it.",
     "cancel": "Cancel",
     "delete2": "Delete",
     "reports": "Reports",
     "noReports": "No reports",
-    "nothingHasBeenSentFor": "Nothing has been sent for this target."
+    "nothingHasBeenSentFor": "Nothing has been sent for this target.",
+    "fromTheEndpointsFile": "From the endpoints file: change what fails a check, production, the schedule and the login there.",
+    "addedHereBefore": "Added here before the file. It keeps being scanned; copy this into the endpoints file to keep it there:"
   },
   "setupPage": {
     "setup": "Setup",
     "runZapOrNucleiAgainst": "Run ZAP or Nuclei against an application you own, and send the report here. The answer says whether the check passes.",
     "sendAReport": "Send a report",
-    "addTheTargetFirstAnd": "Add the target first and verify it. Use DAST_INGEST_TOKEN, set where dast runs, or an API token with the editor role from API tokens.",
+    "addTheTargetFirstAnd": "List the target in the endpoints file first and verify it. Use DAST_INGEST_TOKEN, set where dast runs, or an API token with the editor role from API tokens.",
     "howAReportIsCompared": "How a report is compared",
     "eachEngineSReportsReplace": "Each engine's reports replace its own earlier ones. What it stops reporting is fixed; what it reports for the first time is new.",
     "theFirstReportOfAn": "The first report of an engine for a target adopts what is there and never fails a check.",
@@ -137,7 +135,7 @@
   },
   "welcomePage": {
     "getStarted": "Get started",
-    "addATargetYouOwn": "Add a target you own, prove it, and send a report.",
+    "addATargetYouOwn": "List a target you own in the endpoints file, prove it, and send a report.",
     "waitingForTheFirstTarget": "Waiting for the first target"
   },
   "settingsPage": {
@@ -180,13 +178,11 @@
     "scan": "Scan",
     "scanNow": "Scan now",
     "schedule": "Schedule",
-    "scheduledScan": "Scheduled scan",
     "every": {
       "none": "Not scheduled",
       "daily": "Every day",
       "weekly": "Every week"
     },
-    "saveSchedule": "Save schedule",
     "next": "Next: {{when}}",
     "queued": "Queued",
     "what": "What",
@@ -200,10 +196,12 @@
       "failed": "Failed"
     },
     "noJobs": "No scans by an agent yet",
-    "noJobsDetail": "Start one here, or set a schedule. An agent must be enrolled under Agents.",
+    "noJobsDetail": "Start one here, or give the target a schedule in the endpoints file. An agent must be enrolled under Agents.",
     "login": "Login",
     "noLogin": "None, signed out",
-    "as": "as {{login}}"
+    "as": "as {{login}}",
+    "noSchedule": "No schedule: the endpoints file can give it one with schedule: daily or weekly.",
+    "scheduled": "Runs {{every}}, as a {{scan}} scan, from the endpoints file."
   },
   "agentsPage": {
     "title": "Agents",
@@ -234,10 +232,6 @@
   },
   "authProfiles": {
     "title": "Logins",
-    "description": "For scans behind the target's sign-in page. The secret is sealed, never shown again, and sent only to the agent running a scan that uses it. ZAP uses both kinds; Nuclei sends a header login and runs signed out with a form login.",
-    "add": "Add login",
-    "addDescription": "Use an account made for scanning, with test data only: a scan presses every button it finds.",
-    "name": "Name",
     "kind": "Kind",
     "kinds": {
       "header": "Header",
@@ -248,17 +242,6 @@
     "remove": "Remove login {{name}}",
     "none": "No logins",
     "noneDetail": "Scans see only what a signed-out visitor sees.",
-    "headerName": "Header",
-    "value": "Value",
-    "loginUrl": "Form is sent to",
-    "loginUrlHint": "On the target's own address.",
-    "usernameField": "Username field",
-    "passwordField": "Password field",
-    "username": "Username",
-    "password": "Password",
-    "loggedInRegex": "Signed in when the page contains",
-    "loggedInRegexHint": "A pattern only a signed-in page has, such as Sign out.",
-    "cancel": "Cancel",
-    "save": "Add login"
+    "fromTheFile": "How a scan gets past the target's sign-in page, from the login in the endpoints file. The secret is in the environment variable it names, never in the file, and never comes back here."
   }
 }

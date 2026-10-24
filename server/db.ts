@@ -106,6 +106,8 @@ const MIGRATIONS = [
      UNIQUE (target_id, name)
    );
    ALTER TABLE scan_jobs ADD COLUMN auth_profile_id TEXT REFERENCES auth_profiles (id) ON DELETE SET NULL;`,
+  // Targets come from the endpoints file (ADR 0052); ones added in the UI before stay until the file takes them over.
+  `ALTER TABLE targets ADD COLUMN source TEXT NOT NULL DEFAULT 'ui' CHECK (source IN ('ui', 'file'));`,
 ];
 
 /** Opens the product's single SQLite file in WAL mode (ADR 0011) and migrates it forward. */

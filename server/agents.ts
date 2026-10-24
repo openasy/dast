@@ -5,7 +5,8 @@
 // what an active one found as fixed.
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import { DastError, type Dast } from "./dast.ts";
+import { DastError, FAIL_ON, targetUrl, type Dast, type FailOn } from "./dast.ts";
+import type { Endpoint } from "./endpoints.ts";
 import type { Keyring } from "./kek.ts";
 import { VERIFY_PATH } from "./verify.ts";
 
@@ -85,6 +86,12 @@ export interface Work {
 
 const HEADER = /^[A-Za-z0-9-]{1,64}$/;
 const FIELD = /^[A-Za-z0-9_.[\]-]{1,64}$/;
+const SECRET_VAR = /^[A-Z_][A-Z0-9_]{0,63}$/;
+const newVerifyToken = () => `openasy-dast-${randomBytes(16).toString("hex")}`;
+
+type FileLogin =
+  | { kind: "header"; header: string; secret: string }
+  | { kind: "form"; url: string; usernameField: string; passwordField: string; username: string; loggedIn: string; secret: string };
 
 export function createAgents(
   db: DatabaseSync,
@@ -172,63 +179,179 @@ export function createAgents(
     return (db.prepare("SELECT * FROM auth_profiles WHERE target_id = ? ORDER BY name").all(targetId) as Array<Record<string, string | null>>).map(toProfile);
   }
 
+  /** What an endpoint's dast block asks for, checked; a mistake refuses the whole file. */
+  function parseDast(e: Endpoint) {
+    const d = e.dast!;
+    const fail = (detail: string) => new Error(`${e.name}: dast.${detail}`);
+    const extra = Object.keys(d).filter((k) => !["production", "failOn", "schedule", "profile", "login"].includes(k));
+    if (extra.length) throw fail(`${extra.join(", ")} is unknown; a dast block takes production, failOn, schedule, profile and login.`);
+    if (e.kind !== "http") throw new Error(`${e.name}: a dast target is an http:// or https:// address.`);
+    let url: string;
+    try {
+      url = targetUrl(e.url);
+    } catch (err) {
+      throw new Error(`${e.name}: ${(err as Error).message}`);
+    }
+    if (d.production !== undefined && typeof d.production !== "boolean") throw fail("production is true or false.");
+    if (d.failOn !== undefined && !FAIL_ON.includes(d.failOn as FailOn)) throw fail(`failOn is one of ${FAIL_ON.join(", ")}.`);
+    if (d.schedule !== undefined && !SCHEDULES.includes(d.schedule as Schedule)) throw fail(`schedule is one of ${SCHEDULES.join(", ")}.`);
+    if (d.profile !== undefined && !PROFILES.includes(d.profile as Profile)) throw fail(`profile is one of ${PROFILES.join(", ")}.`);
+    let login: FileLogin | null = null;
+    if (d.login !== undefined) {
+      const l = d.login as Record<string, unknown>;
+      if (l === null || typeof l !== "object" || Array.isArray(l))
+        throw fail("login is a map, such as { kind: header, header: Authorization, secret: SHOP_TOKEN }.");
+      const text = (k: string, max = 256) => (typeof l[k] === "string" && (l[k] as string).length <= max ? (l[k] as string) : "");
+      // The secret is never in the file: it names an environment variable, kept in .env (ADR 0052).
+      if (!SECRET_VAR.test(text("secret", 64)))
+        throw fail("login.secret is the name of an environment variable that holds the secret, such as DAST_SHOP_PASSWORD.");
+      if (l.kind === "header") {
+        if (Object.keys(l).some((k) => !["kind", "header", "secret"].includes(k))) throw fail("login of kind header takes header and secret.");
+        if (!HEADER.test(text("header", 64))) throw fail("login.header is a header name, such as Authorization.");
+        login = { kind: "header", header: text("header", 64), secret: text("secret", 64) };
+      } else if (l.kind === "form") {
+        const keys = ["kind", "url", "usernameField", "passwordField", "username", "loggedIn", "secret"];
+        if (Object.keys(l).some((k) => !keys.includes(k))) throw fail(`login of kind form takes ${keys.slice(1).join(", ")}.`);
+        let at: URL;
+        try {
+          at = new URL(text("url", 2048));
+        } catch {
+          throw fail("login.url is the address the login form is sent to.");
+        }
+        // A scan never sends the password anywhere but the target itself.
+        if (at.origin !== new URL(url).origin) throw fail("login.url must be on the target's own origin.");
+        if (!FIELD.test(text("usernameField", 64)) || !FIELD.test(text("passwordField", 64)))
+          throw fail("login.usernameField and passwordField are the form's field names.");
+        if (!text("username")) throw fail("login.username is required.");
+        if (!text("loggedIn")) throw fail("login.loggedIn is text only a signed-in page shows, such as Sign out.");
+        login = {
+          kind: "form",
+          url: at.href,
+          usernameField: text("usernameField", 64),
+          passwordField: text("passwordField", 64),
+          username: text("username"),
+          loggedIn: text("loggedIn"),
+          secret: text("secret", 64),
+        };
+      } else throw fail("login.kind is header or form.");
+    }
+    return {
+      url,
+      production: d.production === true,
+      failOn: (d.failOn as FailOn | undefined) ?? "high",
+      schedule: (d.schedule as Schedule | undefined) ?? "none",
+      profile: (d.profile as Profile | undefined) ?? "standard",
+      login,
+    };
+  }
+
   /**
-   * Adds a login: a header sent with every request, or a form ZAP fills in. The login page must be on the target's
-   * origin, so a scan never sends its password anywhere else.
+   * Makes the targets match the endpoints file (ADR 0052): every entry with a dast block is a target, found again by
+   * its name. A target added here before, with the entry's name or address, becomes the file's and keeps its scans and
+   * findings. Another address is a new target to prove. A login's secret is read from the environment variable it
+   * names; without it the target is scanned without its login, and the file says so. Returns what to fix.
    */
-  function createAuthProfile(targetId: string, body: Record<string, unknown>): AuthProfile {
-    const t = target(targetId);
-    if (!opts.keyring) throw new DastError(503, "not-configured", "Mount openasy-kek: a login's secret is kept only sealed (ADR 0021).");
-    const str = (k: string, max = 256) => (typeof body[k] === "string" && (body[k] as string).length <= max ? (body[k] as string) : "");
-    const name = str("name", 64).trim();
-    if (!/^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$/.test(name)) throw bad("name is up to 64 letters, digits, spaces, . _ and -.");
-    if (db.prepare("SELECT 1 FROM auth_profiles WHERE target_id = ? AND name = ?").get(targetId, name))
-      throw new DastError(409, "conflict", `This target has a login named ${name}.`);
-    const id = randomUUID();
-    if (body.kind === "header") {
-      const headerName = str("headerName", 64);
-      const value = str("value", 4096);
-      if (!HEADER.test(headerName)) throw bad("headerName is a header name, such as Authorization.");
-      if (!value || /[\r\n]/.test(value)) throw bad("value is the header's value, on one line.");
-      db.prepare("INSERT INTO auth_profiles (id, target_id, name, kind, header_name, secret, created_at) VALUES (?, ?, ?, 'header', ?, ?, ?)").run(
-        id,
-        targetId,
-        name,
-        headerName,
-        opts.keyring.seal(value),
-        now(),
-      );
-    } else if (body.kind === "form") {
-      const loginUrl = str("loginUrl", 2048);
-      let login: URL;
-      try {
-        login = new URL(loginUrl);
-      } catch {
-        throw bad("loginUrl is the address the login form is sent to.");
+  function syncFile(endpoints: Endpoint[], env: Record<string, string | undefined> = process.env): string[] {
+    const wanted = endpoints.filter((e) => e.dast).map((e) => ({ e, d: parseDast(e) }));
+    const urls = new Map<string, string>();
+    for (const { e, d } of wanted) {
+      const other = urls.get(d.url);
+      if (other) throw new Error(`${e.name}: ${d.url} is the address of ${other} too; a target is in the file once.`);
+      urls.set(d.url, e.name);
+    }
+    const warnings: string[] = [];
+    const kept: string[] = [];
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      for (const { e, d } of wanted) {
+        const t = (db.prepare("SELECT * FROM targets WHERE name = ?").get(e.name) ??
+          db.prepare("SELECT * FROM targets WHERE url = ? AND source = 'ui'").get(d.url)) as Record<string, string | number | null> | undefined;
+        let id: string;
+        if (!t) {
+          id = randomUUID();
+          db.prepare("INSERT INTO targets (id, name, url, production, fail_on, verify_token, created_at, source) VALUES (?, ?, ?, ?, ?, ?, ?, 'file')").run(
+            id,
+            e.name,
+            d.url,
+            d.production ? 1 : 0,
+            d.failOn,
+            newVerifyToken(),
+            now(),
+          );
+        } else {
+          id = t.id as string;
+          // The address another target in the file had is freed first, so a swap of two addresses applies.
+          db.prepare("UPDATE targets SET url = 'moving:' || id WHERE url = ? AND id <> ?").run(d.url, id);
+          db.prepare("UPDATE targets SET name = ?, url = ?, production = ?, fail_on = ?, source = 'file' WHERE id = ?").run(
+            e.name,
+            d.url,
+            d.production ? 1 : 0,
+            d.failOn,
+            id,
+          );
+          // Proof of one address says nothing about another.
+          if (t.url !== d.url) db.prepare("UPDATE targets SET verified_at = NULL, verify_token = ? WHERE id = ?").run(newVerifyToken(), id);
+        }
+        kept.push(id);
+        setSchedule(id, { schedule: d.schedule, scheduleProfile: d.profile });
+        // The file's login is the target's only one.
+        db.prepare("DELETE FROM auth_profiles WHERE target_id = ? AND name <> 'file'").run(id);
+        const value = d.login ? env[d.login.secret] : undefined;
+        if (d.login && !value) warnings.push(`${e.name}: ${d.login.secret} is not set, so it is scanned without its login.`);
+        else if (d.login && !opts.keyring)
+          warnings.push(`${e.name}: mount openasy-kek to scan with its login; a login's secret is kept only sealed (ADR 0021).`);
+        if (!d.login || !value || !opts.keyring) db.prepare("DELETE FROM auth_profiles WHERE target_id = ?").run(id);
+        else {
+          const l = d.login;
+          const row =
+            l.kind === "header"
+              ? { kind: "header", header_name: l.header, login_url: null, username_field: null, password_field: null, username: null, logged_in_regex: null }
+              : {
+                  kind: "form",
+                  header_name: null,
+                  login_url: l.url,
+                  username_field: l.usernameField,
+                  password_field: l.passwordField,
+                  username: l.username,
+                  logged_in_regex: l.loggedIn.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+                };
+          const sealed = opts.keyring.seal(value);
+          const updated = db
+            .prepare(
+              "UPDATE auth_profiles SET kind = ?, header_name = ?, login_url = ?, username_field = ?, password_field = ?, username = ?, logged_in_regex = ?, secret = ? WHERE target_id = ? AND name = 'file'",
+            )
+            .run(row.kind, row.header_name, row.login_url, row.username_field, row.password_field, row.username, row.logged_in_regex, sealed, id);
+          if (updated.changes === 0)
+            db.prepare(
+              "INSERT INTO auth_profiles (id, target_id, name, kind, header_name, login_url, username_field, password_field, username, logged_in_regex, secret, created_at) VALUES (?, ?, 'file', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            ).run(
+              randomUUID(),
+              id,
+              row.kind,
+              row.header_name,
+              row.login_url,
+              row.username_field,
+              row.password_field,
+              row.username,
+              row.logged_in_regex,
+              sealed,
+              now(),
+            );
+        }
       }
-      if (login.origin !== new URL(t.url as string).origin) throw bad("loginUrl must be on the target's own origin.");
-      const usernameField = str("usernameField", 64);
-      const passwordField = str("passwordField", 64);
-      if (!FIELD.test(usernameField) || !FIELD.test(passwordField)) throw bad("usernameField and passwordField are the form's field names.");
-      const username = str("username");
-      const password = str("password", 1024);
-      if (!username || !password) throw bad("username and password are required.");
-      const loggedInRegex = str("loggedInRegex", 256);
-      try {
-        if (!loggedInRegex) throw new Error();
-        new RegExp(loggedInRegex);
-      } catch {
-        throw bad("loggedInRegex is a pattern only a signed-in page contains, such as Sign out.");
-      }
-      db.prepare(
-        `INSERT INTO auth_profiles (id, target_id, name, kind, login_url, username_field, password_field, username, logged_in_regex, secret, created_at)
-         VALUES (?, ?, ?, 'form', ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(id, targetId, name, login.href, usernameField, passwordField, username, loggedInRegex, opts.keyring.seal(password), now());
-    } else throw bad("kind is header or form.");
-    return toProfile(db.prepare("SELECT * FROM auth_profiles WHERE id = ?").get(id) as Record<string, string | null>);
+      const gone = (db.prepare("SELECT id FROM targets WHERE source = 'file'").all() as Array<{ id: string }>).filter((r) => !kept.includes(r.id));
+      for (const r of gone) db.prepare("DELETE FROM targets WHERE id = ?").run(r.id);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
+    return warnings;
   }
 
   function deleteAuthProfile(targetId: string, id: string) {
+    if (target(targetId).source === "file")
+      throw new DastError(409, "conflict", "This target comes from the endpoints file (OPENASY_ENDPOINTS); its login is changed there.");
     if (db.prepare("DELETE FROM auth_profiles WHERE id = ? AND target_id = ?").run(id, targetId).changes === 0) throw notFound("The login");
   }
 
@@ -290,7 +413,8 @@ export function createAgents(
     const due = db.prepare("SELECT * FROM targets WHERE schedule <> 'none' AND next_scan_at <= ?").all(now()) as Array<Record<string, string | number | null>>;
     for (const t of due) {
       const profile = allowed(t, t.schedule_profile as Profile, true);
-      queue(t.id as string, "scan", profile, "schedule");
+      const login = db.prepare("SELECT id FROM auth_profiles WHERE target_id = ? AND name = 'file'").get(t.id as string) as { id: string } | undefined;
+      queue(t.id as string, "scan", profile, "schedule", login?.id ?? null);
       db.prepare("UPDATE targets SET next_scan_at = ? WHERE id = ?").run(
         new Date(Date.now() + (t.schedule === "daily" ? DAY : 7 * DAY)).toISOString(),
         t.id as string,
@@ -438,7 +562,7 @@ export function createAgents(
   return {
     listJobs,
     listAuthProfiles,
-    createAuthProfile,
+    syncFile,
     deleteAuthProfile,
     scanNow,
     setSchedule,

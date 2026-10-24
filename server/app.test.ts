@@ -1,5 +1,6 @@
 import { gzipSync } from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { parseEndpoints } from "./endpoints.ts";
 import { sarif, startApp, type TestResult } from "./test-app.ts";
 
 let app: Awaited<ReturnType<typeof startApp>>;
@@ -20,28 +21,52 @@ const nuclei = (...r: TestResult[]) => app.scan({ target: "shop-staging" }, sari
 const post = (path: string, body: unknown) => app.admin(path, { method: "POST", body: JSON.stringify(body) });
 
 describe("targets", () => {
-  it("creates a target, with the proof the owner must serve", async () => {
-    const res = await post("/api/v1/targets", { name: "shop-staging", url: `${shop}/` });
-    expect(res.status).toBe(201);
-    expect(await json(res)).toMatchObject({
+  it("comes from the endpoints file, with the proof the owner must serve; no route adds or changes one", async () => {
+    expect(await app.setTarget("shop-staging", `${shop}/`)).toMatchObject({
       name: "shop-staging",
       url: shop,
+      source: "file",
       production: false,
       failOn: "high",
       verified: false,
       verification: { method: "file", url: `${shop}/.well-known/openasy-dast`, content: expect.stringMatching(/^openasy-dast-[0-9a-f]{32}$/) },
     });
+    expect((await post("/api/v1/targets", { name: "other", url: "https://other.example.com" })).status).toBe(404);
   });
 
-  it("refuses duplicates and things that are not addresses", async () => {
-    expect((await post("/api/v1/targets", { name: "shop-staging", url: "https://other.example.com" })).status).toBe(409);
-    expect((await post("/api/v1/targets", { name: "other", url: shop })).status).toBe(409);
-    expect((await post("/api/v1/targets", { name: "x", url: "ftp://shop.example.com" })).status).toBe(422);
-    expect((await post("/api/v1/targets", { name: "x", url: "not a url" })).status).toBe(422);
-    expect((await post("/api/v1/targets", { name: "bad name", url: "https://a.example.com" })).status).toBe(422);
-    expect((await post("/api/v1/targets", { name: "x", url: "https://a.example.com", production: "yes" })).status).toBe(422);
-    expect((await post("/api/v1/targets", { name: "x", url: "https://a.example.com", extra: 1 })).status).toBe(422);
-    expect((await post("/api/v1/targets", { name: "x", url: "https://a.example.com", failOn: "urgent" })).status).toBe(422);
+  it("refuses a file with something that is not a target, and changes nothing", async () => {
+    const before = await json(await app.admin("/api/v1/targets"));
+    const sync = (entries: unknown[]) => () => app.agents.syncFile(parseEndpoints(JSON.stringify({ endpoints: entries })), {});
+    for (const [entry, why] of [
+      [{ name: "x", url: "tcp://shop.example.com:443", dast: {} }, /http:\/\/ or https:\/\//],
+      [{ name: "x", url: "https://a.example.com", dast: { production: "yes" } }, /production is true or false/],
+      [{ name: "x", url: "https://a.example.com", dast: { extra: 1 } }, /extra is unknown/],
+      [{ name: "x", url: "https://a.example.com", dast: { failOn: "urgent" } }, /failOn is one of/],
+      [{ name: "x", url: "https://a.example.com", dast: { schedule: "hourly" } }, /schedule is one of/],
+      [{ name: "x", url: "https://a.example.com", dast: { login: { kind: "header", header: "Authorization", secret: "not-a-var" } } }, /environment variable/],
+      [
+        { name: "x", url: "https://a.example.com", dast: { login: { kind: "header", header: "Authorization", value: "s3cret", secret: "X" } } },
+        /takes header and secret/,
+      ],
+      [
+        {
+          name: "x",
+          url: "https://a.example.com",
+          dast: {
+            login: { kind: "form", url: "https://evil.example.com/login", usernameField: "u", passwordField: "p", username: "a", loggedIn: "Out", secret: "X" },
+          },
+        },
+        /own origin/,
+      ],
+    ] as const)
+      expect(sync([entry]), JSON.stringify(entry)).toThrow(why);
+    expect(
+      sync([
+        { name: "a", url: "https://same.example.com", dast: {} },
+        { name: "b", url: "https://same.example.com/", dast: {} },
+      ]),
+    ).toThrow(/in the file once/);
+    expect(await json(await app.admin("/api/v1/targets"))).toEqual(before);
   });
 
   it("is verified only when the site serves the content", async () => {
@@ -177,24 +202,29 @@ describe("triage and policy", () => {
     expect(await json(await put({ state: "open" }))).toMatchObject({ triage: null });
   });
 
-  it("changes what fails a check, and whether the target is production", async () => {
+  it("changes what fails a check, and whether the target is production, in the file", async () => {
     const t = await target();
-    const patch = (body: unknown) => app.admin(`/api/v1/targets/${t.id}`, { method: "PATCH", body: JSON.stringify(body) });
-    expect(await json(await patch({ failOn: "none", production: true }))).toMatchObject({ failOn: "none", production: true });
+    expect((await app.admin(`/api/v1/targets/${t.id}`, { method: "PATCH", body: JSON.stringify({ failOn: "none" }) })).status).toBe(404);
+    expect(await app.setTarget("shop-staging", shop, { failOn: "none", production: true })).toMatchObject({
+      id: t.id,
+      failOn: "none",
+      production: true,
+      verified: true,
+    });
     expect(await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }))).toMatchObject({
       new: 1,
       blocking: 0,
       passed: true,
       failOn: "none",
     });
-    await patch({ failOn: "critical" });
+    await app.setTarget("shop-staging", shop, { failOn: "critical", production: true });
     expect(
       await json(await zap(xss, headers, { rule: "new", level: "error", url: `${shop}/new` }, { rule: "crit", score: 9.9, url: `${shop}/crit` })),
     ).toMatchObject({ new: 1, blocking: 1, passed: false });
-    expect((await patch({})).status).toBe(422);
-    expect((await patch({ failOn: "urgent" })).status).toBe(422);
-    expect((await patch({ url: "https://x.example.com" })).status).toBe(422);
-    expect((await patch({ production: "yes" })).status).toBe(422);
+    // Another address is another site to prove.
+    expect(await app.setTarget("shop-staging", "https://shop2.example.com", { failOn: "critical" })).toMatchObject({ id: t.id, verified: false });
+    await app.setTarget("shop-staging", shop, { failOn: "critical" });
+    app.db.prepare("UPDATE targets SET verified_at = ? WHERE id = ?").run(new Date().toISOString(), t.id);
   });
 
   it("filters and pages findings", async () => {
@@ -209,15 +239,32 @@ describe("triage and policy", () => {
     expect((await app.admin("/api/v1/findings?limit=0")).status).toBe(422);
   });
 
-  it("deletes a target with its reports and findings", async () => {
+  it("removes a target with its reports and findings once the file does", async () => {
     const t = await target();
     const scans = (await json(await app.admin(`/api/v1/targets/${t.id}/scans`))).scans;
     expect(scans.length).toBeGreaterThan(3);
     expect((await app.admin(`/api/v1/scans/${scans[0].id}`)).status).toBe(200);
-    expect((await app.admin(`/api/v1/targets/${t.id}`, { method: "DELETE" })).status).toBe(204);
+    expect((await app.admin(`/api/v1/targets/${t.id}`, { method: "DELETE" })).status).toBe(409);
+    app.dropTarget("shop-staging");
     expect((await app.admin(`/api/v1/targets/${t.id}`)).status).toBe(404);
     expect((await app.admin(`/api/v1/scans/${scans[0].id}`)).status).toBe(404);
     expect((await json(await app.admin("/api/v1/findings"))).findings).toEqual([]);
+  });
+
+  it("deletes one added here before the file, and takes one over by its address", async () => {
+    const legacy = (id: string, name: string, url: string) =>
+      app.db
+        .prepare(
+          "INSERT INTO targets (id, name, url, production, fail_on, verify_token, verified_at, created_at) VALUES (?, ?, ?, 0, 'high', 'openasy-dast-x', ?, ?)",
+        )
+        .run(id, name, url, new Date().toISOString(), new Date().toISOString());
+    legacy("ui-old", "old", "https://old.example.com");
+    expect((await app.admin("/api/v1/targets/ui-old", { method: "DELETE" })).status).toBe(204);
+    expect((await app.admin("/api/v1/targets/ui-old", { method: "DELETE" })).status).toBe(404);
+    legacy("ui-blog", "blog-old", "https://blog.example.com");
+    // The same address under another name: the file's entry takes it over, still proven.
+    expect(await app.setTarget("blog", "https://blog.example.com")).toMatchObject({ id: "ui-blog", name: "blog", source: "file", verified: true });
+    app.dropTarget("blog");
   });
 });
 
@@ -227,10 +274,8 @@ describe("access", () => {
     expect((await anon("/api/v1/scans?target=a", { method: "POST", body: "{}" })).status).toBe(401);
     expect((await anon("/api/v1/scans?target=a", { method: "POST", body: "{}", headers: { authorization: "Bearer nope" } })).status).toBe(401);
     expect((await anon("/api/v1/targets")).status).toBe(401);
-    expect((await anon("/api/v1/targets", { method: "POST", body: "{}" })).status).toBe(401);
     // The ingest token sends reports and nothing else.
     expect((await app.ingest("/api/v1/targets")).status).toBe(401);
-    expect((await app.ingest("/api/v1/targets", { method: "POST", body: "{}" })).status).toBe(401);
     expect((await app.ingest("/api/v1/findings")).status).toBe(401);
     const closed = await startApp({ version: "0.1.0", ingestToken: undefined, adminToken: undefined });
     expect((await fetch(`${closed.base}/api/v1/scans?target=a`, { method: "POST", body: "{}" })).status).toBe(503);

@@ -1,6 +1,7 @@
 import {
   AppShell,
   Badge,
+  Callout,
   BrandProvider,
   Button,
   DataTable,
@@ -40,7 +41,6 @@ import {
   type FailOn,
   type Job,
   type Profile,
-  type Schedule,
   type Finding,
   type ProductLink,
   type Scan,
@@ -449,15 +449,31 @@ function VerifiedBadge({ t }: { t: Pick<Target, "verified"> }) {
   );
 }
 
-function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
+// What to write in the endpoints file (ADR 0052), shown where there is nothing yet.
+const EXAMPLE = `endpoints:
+  - name: shop-staging
+    url: https://staging.shop.example.com
+    dast:
+      schedule: weekly
+      login: { kind: header, header: Authorization, secret: DAST_SHOP_TOKEN }`;
+
+/** The entries of the endpoints file for targets added here before it was the way in. Their logins are not copied. */
+function toYaml(targets: Target[]): string {
+  const entry = (t: Target) => {
+    const dast = [
+      t.production && "production: true",
+      t.failOn !== "high" && `failOn: ${t.failOn}`,
+      t.schedule !== "none" && `schedule: ${t.schedule}`,
+      t.scheduleProfile !== "standard" && `profile: ${t.scheduleProfile}`,
+    ].filter(Boolean);
+    return [`  - name: ${t.name}`, `    url: ${t.url}`, `    dast: { ${dast.join(", ")} }`].join("\n").replace("dast: {  }", "dast: {}");
+  };
+  return ["endpoints:", ...targets.map(entry)].join("\n");
+}
+
+function TargetsPage({ call, summary }: { call: Call; summary?: Summary; reload: () => void }) {
   const msg = useT();
-  const { can } = useAuth();
   const [rows, setRows] = useState<Target[]>();
-  const [adding, setAdding] = useState(false);
-  const [name, setName] = useState("");
-  const [address, setAddress] = useState("");
-  const [production, setProduction] = useState("no");
-  const [error, setError] = useState<string>();
   const load = useCallback(
     () =>
       void call<{ targets: Target[] }>("/api/v1/targets?limit=500").then(
@@ -467,19 +483,7 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
     [call],
   );
   useEffect(load, [load]);
-  const close = () => (setAdding(false), setName(""), setAddress(""), setProduction("no"), setError(undefined));
-
-  const add = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      const t = await call<Target>("/api/v1/targets", { method: "POST", body: JSON.stringify({ name, url: address, production: production === "yes" }) });
-      close();
-      reload();
-      navigate(`/targets/${t.id}`);
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
+  const added = (rows ?? []).filter((t) => t.source === "ui");
 
   const columns: Column<Target>[] = [
     {
@@ -488,9 +492,12 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
       width: "24%",
       sortValue: (t) => t.name,
       cell: (t) => (
-        <a href={`/targets/${t.id}`} className="font-medium">
-          {t.name}
-        </a>
+        <span className="flex flex-wrap items-center gap-1.5">
+          <a href={`/targets/${t.id}`} className="font-medium">
+            {t.name}
+          </a>
+          {t.source === "ui" && <Badge tone="info">{msg("targetsPage.notInTheFile")}</Badge>}
+        </span>
       ),
     },
     { id: "url", header: msg("targetsPage.address"), cell: (t) => <span className="dast-wrap font-mono text-xs">{t.url}</span> },
@@ -505,17 +512,25 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
   ];
   return (
     <>
-      <PageHeader
-        title={msg("targetsPage.targets")}
-        description={msg("targetsPage.anAddressThatMayBe")}
-        actions={
-          can("admin") && (
-            <Button variant="primary" icon={<Plus />} onClick={() => setAdding(true)}>
-              {msg("targetsPage.addTarget")}
-            </Button>
-          )
-        }
-      />
+      <PageHeader title={msg("targetsPage.targets")} description={msg("targetsPage.anAddressThatMayBe")} />
+      {summary?.endpointsFile?.error && (
+        <Callout tone="danger" title={msg("targetsPage.theEndpointsFileIsNot")}>
+          {msg("targetsPage.theTargetsFromItsLast", { error: summary.endpointsFile.error, path: summary.endpointsFile.path })}
+        </Callout>
+      )}
+      {!!summary?.endpointsFile?.warnings.length && (
+        <Callout tone="warning" title={msg("targetsPage.theEndpointsFileHasSomething")}>
+          {summary.endpointsFile.warnings.join(" ")}
+        </Callout>
+      )}
+      {!!added.length && (
+        <Callout tone="info" title={msg("targetsPage.addedHereBefore", { count: added.length })}>
+          {msg("targetsPage.copyTheseIntoTheEndpointsFile")}
+          <div className="mt-2">
+            <Code>{toYaml(added)}</Code>
+          </div>
+        </Callout>
+      )}
       <Panel flush>
         <DataTable
           label={msg("targetsPage.targets")}
@@ -526,46 +541,14 @@ function TargetsPage({ call, reload }: { call: Call; reload: () => void }) {
           minWidth={900}
           empty={
             <EmptyState title={msg("targetsPage.noTargetsYet")}>
-              {can("admin") ? msg("targetsPage.addTheAddressOfAn") : msg("targetsPage.anAdminAddsTheAddresses")}
+              {msg("targetsPage.theyComeFromTheEndpointsFile")}
+              <div className="mt-3 text-left">
+                <Code>{EXAMPLE}</Code>
+              </div>
             </EmptyState>
           }
         />
       </Panel>
-      <Dialog
-        open={adding}
-        onOpenChange={(open) => !open && close()}
-        title={msg("targetsPage.addATarget")}
-        description={msg("targetsPage.youProveTheAddressIs")}
-        onSubmit={add}
-        footer={
-          <>
-            <Button type="button" onClick={close}>
-              {msg("targetsPage.cancel")}
-            </Button>
-            <Button type="submit" variant="primary" disabled={!name.trim() || !address.trim()}>
-              {msg("targetsPage.addTarget")}
-            </Button>
-          </>
-        }
-      >
-        <TextField label={msg("targetsPage.name")} value={name} onChange={(e) => setName(e.target.value)} hint={msg("targetsPage.lettersDigitsAndCiSends")} />
-        <TextField
-          label={msg("targetsPage.address")}
-          value={address}
-          onChange={(e) => setAddress(e.target.value)}
-          hint="https://shop.example.com, or with a path to test only a part of it."
-          error={error}
-        />
-        <SelectField
-          label={msg("targetsPage.isItProduction")}
-          value={production}
-          onChange={(e) => setProduction(e.target.value)}
-          options={[
-            { value: "no", label: msg("targetsPage.noStagingOrTest") },
-            { value: "yes", label: msg("targetsPage.yesNeverGivenAFull") },
-          ]}
-        />
-      </Dialog>
     </>
   );
 }
@@ -576,15 +559,13 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
   const { can } = useAuth();
   const [target, setTarget] = useState<Target | null>();
   const [scans, setScans] = useState<Scan[]>();
-  const [failOn, setFailOn] = useState<FailOn>("high");
-  const [production, setProduction] = useState("no");
   const [error, setError] = useState<string>();
   const [removing, setRemoving] = useState(false);
   const [checking, setChecking] = useState(false);
 
   const load = useCallback(() => {
     call<Target>(`/api/v1/targets/${id}`).then(
-      (t) => (setTarget(t), setFailOn(t.failOn), setProduction(t.production ? "yes" : "no")),
+      (t) => setTarget(t),
       () => setTarget(null),
     );
     call<{ scans: Scan[] }>(`/api/v1/targets/${id}/scans?limit=50`).then(
@@ -594,16 +575,6 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
   }, [call, id]);
   useEffect(load, [load]);
 
-  const save = async () => {
-    try {
-      await call(`/api/v1/targets/${id}`, { method: "PATCH", body: JSON.stringify({ failOn, production: production === "yes" }) });
-      setError(undefined);
-      load();
-      reload();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
   const verify = async () => {
     setChecking(true);
     try {
@@ -670,33 +641,35 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
           </div>
         </Panel>
       )}
-      {can("admin") && target && (
+      {target && (
         <Panel title={msg("targetPage.policy")} description={msg("targetPage.whatACheckTreatsAs")}>
-          <div className="grid gap-2 sm:grid-cols-2">
-            <SelectField
-              label={msg("targetPage.failTheCheckFor")}
-              value={failOn}
-              onChange={(e) => setFailOn(e.target.value as FailOn)}
-              options={FAIL_ON(msg)}
-            />
-            <SelectField
-              label={msg("targetPage.production")}
-              value={production}
-              onChange={(e) => setProduction(e.target.value)}
-              options={[
-                { value: "no", label: msg("targetPage.noStagingOrTest") },
-                { value: "yes", label: msg("targetPage.yesNoFullScans") },
-              ]}
-            />
-          </div>
-          <div className="mt-3 flex gap-2">
-            <Button variant="primary" onClick={() => void save()} disabled={failOn === target.failOn && (production === "yes") === target.production}>
-              {msg("targetPage.savePolicy")}
-            </Button>
-            <Button icon={<Trash2 />} onClick={() => setRemoving(true)}>
-              {msg("targetPage.deleteTarget")}
-            </Button>
-          </div>
+          <dl className="m-0 grid gap-2 text-sm sm:grid-cols-2">
+            <div>
+              <dt className="text-fg-muted">{msg("targetPage.failTheCheckFor")}</dt>
+              <dd className="m-0">{FAIL_ON(msg).find((o) => o.value === target.failOn)?.label}</dd>
+            </div>
+            <div>
+              <dt className="text-fg-muted">{msg("targetPage.production")}</dt>
+              <dd className="m-0">{target.production ? msg("targetPage.yesNoFullScans") : msg("targetPage.noStagingOrTest")}</dd>
+            </div>
+          </dl>
+          {target.source === "file" ? (
+            <p className="mt-3 mb-0 text-sm text-fg-muted">{msg("targetPage.fromTheEndpointsFile")}</p>
+          ) : (
+            <>
+              <p className="mt-3 mb-0 text-sm text-fg-muted">{msg("targetPage.addedHereBefore")}</p>
+              <div className="mt-2">
+                <Code>{toYaml([target])}</Code>
+              </div>
+              {can("admin") && (
+                <div className="mt-3">
+                  <Button icon={<Trash2 />} onClick={() => setRemoving(true)}>
+                    {msg("targetPage.deleteTarget")}
+                  </Button>
+                </div>
+              )}
+            </>
+          )}
           <Dialog
             open={removing}
             onOpenChange={setRemoving}
@@ -738,13 +711,11 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
 const JOB_TONE = { queued: "neutral", running: "info", done: "success", failed: "danger" } as const;
 
 /** Scans run by dast-agent for one target: start one, set its schedule, and the latest jobs (ADR 0037). */
-function AgentScans({ call, target, onChanged }: { call: Call; target: Target; onChanged: () => void }) {
+function AgentScans({ call, target }: { call: Call; target: Target; onChanged: () => void }) {
   const ago = useAgo();
   const msg = useT();
   const { can } = useAuth();
   const [profile, setProfile] = useState<Profile>(target.verified ? "standard" : "passive");
-  const [schedule, setSchedule] = useState<Schedule>(target.schedule);
-  const [scheduleProfile, setScheduleProfile] = useState<Profile>(target.scheduleProfile);
   const [jobs, setJobs] = useState<Job[]>();
   const [logins, setLogins] = useState<AuthProfile[]>([]);
   const [login, setLogin] = useState("");
@@ -781,15 +752,6 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
       await call(`/api/v1/targets/${target.id}/scan`, { method: "POST", body: JSON.stringify({ profile, authProfile: login || null }) });
       setError(undefined);
       loadJobs();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
-  const saveSchedule = async () => {
-    try {
-      await call(`/api/v1/targets/${target.id}`, { method: "PATCH", body: JSON.stringify({ schedule, scheduleProfile }) });
-      setError(undefined);
-      onChanged();
     } catch (err) {
       setError((err as Error).message);
     }
@@ -846,28 +808,12 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
             </Button>
           </div>
         )}
-        {can("admin") && (
-          <div className="flex flex-wrap items-end gap-2">
-            <SelectField
-              label={msg("agentScans.schedule")}
-              value={schedule}
-              onChange={(e) => setSchedule(e.target.value as Schedule)}
-              options={(["none", "daily", "weekly"] as const).map((s) => ({ value: s, label: msg(`agentScans.every.${s}`) }))}
-            />
-            <SelectField
-              label={msg("agentScans.scheduledScan")}
-              value={scheduleProfile}
-              onChange={(e) => setScheduleProfile(e.target.value as Profile)}
-              options={profiles(target.verified)}
-            />
-            <Button onClick={() => void saveSchedule()} disabled={schedule === target.schedule && scheduleProfile === target.scheduleProfile}>
-              {msg("agentScans.saveSchedule")}
-            </Button>
-            {target.nextScanAt && (
-              <span className="text-xs text-fg-muted">{msg("agentScans.next", { when: new Date(target.nextScanAt).toLocaleString() })}</span>
-            )}
-          </div>
-        )}
+        <p className="m-0 text-sm text-fg-muted">
+          {target.schedule === "none"
+            ? msg("agentScans.noSchedule")
+            : msg("agentScans.scheduled", { every: msg(`agentScans.every.${target.schedule}`), scan: msg(`agentScans.profile.${target.scheduleProfile}`) })}
+          {target.nextScanAt && ` ${msg("agentScans.next", { when: new Date(target.nextScanAt).toLocaleString() })}`}
+        </p>
         {error && <span className="text-xs text-danger">{error}</span>}
         <DataTable
           label={msg("agentScans.title")}
@@ -886,53 +832,31 @@ function AgentScans({ call, target, onChanged }: { call: Call; target: Target; o
 /** The target's logins, for scans behind its sign-in page. Secrets go in and never come back (ADR 0037). */
 function AuthProfiles({ call, target, profiles, onChanged }: { call: Call; target: Target; profiles: AuthProfile[]; onChanged: () => void }) {
   const msg = useT();
-  const [adding, setAdding] = useState(false);
-  const [kind, setKind] = useState<"header" | "form">("header");
-  const [form, setForm] = useState<Record<string, string>>({});
-  const [error, setError] = useState<string>();
-  const field = (k: string) => ({ value: form[k] ?? "", onChange: (e: { target: { value: string } }) => setForm((f) => ({ ...f, [k]: e.target.value })) });
-  const close = () => (setAdding(false), setForm({}), setError(undefined));
-  const add = async (e: FormEvent) => {
-    e.preventDefault();
-    try {
-      await call(`/api/v1/targets/${target.id}/auth-profiles`, { method: "POST", body: JSON.stringify({ ...form, kind }) });
-      close();
-      onChanged();
-    } catch (err) {
-      setError((err as Error).message);
-    }
-  };
   const remove = (p: AuthProfile) => call(`/api/v1/targets/${target.id}/auth-profiles/${p.id}`, { method: "DELETE" }).then(onChanged, () => {});
   const columns: Column<AuthProfile>[] = [
-    { id: "name", header: msg("authProfiles.name"), cell: (p) => <span className="font-medium">{p.name}</span> },
     { id: "kind", header: msg("authProfiles.kind"), cell: (p) => <Badge>{msg(`authProfiles.kinds.${p.kind}`)}</Badge> },
     {
       id: "how",
       header: msg("authProfiles.how"),
       cell: (p) => <span className="dast-wrap font-mono text-xs">{p.kind === "header" ? `${p.headerName}: ••••` : `${p.username} @ ${p.loginUrl}`}</span>,
     },
-    {
-      id: "remove",
-      header: <span className="sr-only">{msg("authProfiles.actions")}</span>,
-      width: "56px",
-      cell: (p) => (
-        <IconButton label={msg("authProfiles.remove", { name: p.name })} size="sm" onClick={() => void remove(p)}>
-          <Trash2 />
-        </IconButton>
-      ),
-    },
+    ...(target.source === "ui"
+      ? [
+          {
+            id: "remove",
+            header: <span className="sr-only">{msg("authProfiles.actions")}</span>,
+            width: "56px",
+            cell: (p: AuthProfile) => (
+              <IconButton label={msg("authProfiles.remove", { name: p.name })} size="sm" onClick={() => void remove(p)}>
+                <Trash2 />
+              </IconButton>
+            ),
+          },
+        ]
+      : []),
   ];
   return (
-    <Panel
-      title={msg("authProfiles.title")}
-      description={msg("authProfiles.description")}
-      flush
-      actions={
-        <Button size="sm" icon={<Plus />} onClick={() => setAdding(true)}>
-          {msg("authProfiles.add")}
-        </Button>
-      }
-    >
+    <Panel title={msg("authProfiles.title")} description={msg("authProfiles.fromTheFile")} flush>
       <DataTable
         label={msg("authProfiles.title")}
         columns={columns}
@@ -941,63 +865,6 @@ function AuthProfiles({ call, target, profiles, onChanged }: { call: Call; targe
         minWidth={520}
         empty={<EmptyState title={msg("authProfiles.none")}>{msg("authProfiles.noneDetail")}</EmptyState>}
       />
-      <Dialog
-        open={adding}
-        onOpenChange={(open) => !open && close()}
-        title={msg("authProfiles.add")}
-        description={msg("authProfiles.addDescription")}
-        onSubmit={add}
-        footer={
-          <>
-            <Button type="button" onClick={close}>
-              {msg("authProfiles.cancel")}
-            </Button>
-            <Button type="submit" variant="primary">
-              {msg("authProfiles.save")}
-            </Button>
-          </>
-        }
-      >
-        <TextField label={msg("authProfiles.name")} {...field("name")} />
-        <SelectField
-          label={msg("authProfiles.kind")}
-          value={kind}
-          onChange={(e) => setKind(e.target.value as "header" | "form")}
-          options={[
-            { value: "header", label: msg("authProfiles.kinds.header") },
-            { value: "form", label: msg("authProfiles.kinds.form") },
-          ]}
-        />
-        {kind === "header" ? (
-          <>
-            <TextField label={msg("authProfiles.headerName")} placeholder="Authorization" mono {...field("headerName")} />
-            <TextField label={msg("authProfiles.value")} type="password" autoComplete="off" mono error={error} {...field("value")} />
-          </>
-        ) : (
-          <>
-            <TextField
-              label={msg("authProfiles.loginUrl")}
-              placeholder={`${target.url}/login`}
-              hint={msg("authProfiles.loginUrlHint")}
-              mono
-              {...field("loginUrl")}
-            />
-            <div className="grid gap-2 sm:grid-cols-2">
-              <TextField label={msg("authProfiles.usernameField")} placeholder="email" mono {...field("usernameField")} />
-              <TextField label={msg("authProfiles.passwordField")} placeholder="password" mono {...field("passwordField")} />
-              <TextField label={msg("authProfiles.username")} autoComplete="off" {...field("username")} />
-              <TextField label={msg("authProfiles.password")} type="password" autoComplete="off" {...field("password")} />
-            </div>
-            <TextField
-              label={msg("authProfiles.loggedInRegex")}
-              placeholder="Sign out"
-              hint={msg("authProfiles.loggedInRegexHint")}
-              error={error}
-              {...field("loggedInRegex")}
-            />
-          </>
-        )}
-      </Dialog>
     </Panel>
   );
 }
@@ -1311,7 +1178,7 @@ function Product() {
       ) : route.page === "findings" ? (
         <FindingsPage call={call} summary={summary} reload={reload} />
       ) : route.page === "targets" ? (
-        <TargetsPage call={call} reload={reload} />
+        <TargetsPage call={call} summary={summary} reload={reload} />
       ) : route.page === "agents" ? (
         can("admin") ? (
           <AgentsPage call={call} />

@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { pageOf, parseSarif, SarifError, SEVERITIES, type Finding, type Severity } from "./sarif.ts";
 import { fetchProof, VERIFY_PATH, type Verifier } from "./verify.ts";
@@ -30,7 +30,7 @@ export type FailOn = Severity | "none";
 export type Triage = "open" | "false-positive" | "accepted";
 export type Status = "open" | "suppressed" | "resolved";
 
-const FAIL_ON: FailOn[] = [...SEVERITIES, "none"];
+export const FAIL_ON: FailOn[] = [...SEVERITIES, "none"];
 const TRIAGE: Triage[] = ["open", "false-positive", "accepted"];
 const RANK: Record<Severity, number> = { critical: 4, high: 3, medium: 2, low: 1 };
 const RANK_SQL = `CASE severity WHEN 'critical' THEN 4 WHEN 'high' THEN 3 WHEN 'medium' THEN 2 ELSE 1 END`;
@@ -161,6 +161,7 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       open: openCounts(t.id),
       suppressed,
       lastScan: last ? { at: last.created_at as string, engine: last.engine as string, new: last.new_count as number, passed: last.blocking === 0 } : null,
+      source: t.source as "ui" | "file",
       schedule: t.schedule as "none" | "daily" | "weekly",
       scheduleProfile: t.schedule_profile as "passive" | "standard" | "full",
       nextScanAt: (t.next_scan_at as string | null) ?? null,
@@ -237,33 +238,7 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
     };
   }
 
-  const failOnOf = (value: unknown): FailOn => {
-    if (typeof value !== "string" || !FAIL_ON.includes(value as FailOn)) throw bad(`failOn must be one of ${FAIL_ON.join(", ")}.`);
-    return value as FailOn;
-  };
-
   return {
-    createTarget(body: Record<string, unknown>) {
-      const { name, url, production = false, failOn = "high", ...rest } = body;
-      if (Object.keys(rest).length || typeof name !== "string" || !NAME.test(name))
-        throw bad("Expected { name, url, production?, failOn? }; name is up to 64 letters, digits, . _ and -.");
-      if (typeof production !== "boolean") throw bad("production must be true or false.");
-      const address = targetUrl(url);
-      if (db.prepare("SELECT 1 FROM targets WHERE name = ? OR url = ?").get(name, address))
-        throw new DastError(409, "conflict", "A target with this name or address exists.");
-      const id = randomUUID();
-      db.prepare("INSERT INTO targets (id, name, url, production, fail_on, verify_token, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)").run(
-        id,
-        name,
-        address,
-        production ? 1 : 0,
-        failOnOf(failOn),
-        `openasy-dast-${randomBytes(16).toString("hex")}`,
-        now(),
-      );
-      return presentTarget(targetRow(id));
-    },
-
     listTargets(cursor: string | undefined, limit: number): Page<ReturnType<typeof presentTarget>> {
       const offset = decodeCursor(cursor);
       const rows = db.prepare("SELECT * FROM targets ORDER BY name LIMIT ? OFFSET ?").all(limit + 1, offset) as Array<Record<string, any>>;
@@ -272,20 +247,11 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
 
     target: (id: string) => presentTarget(targetRow(id)),
 
-    updateTarget(id: string, body: Record<string, unknown>) {
-      targetRow(id);
-      const { production, failOn, ...rest } = body;
-      if (Object.keys(rest).length || (production === undefined && failOn === undefined)) throw bad("Expected { production?, failOn? }.");
-      if (production !== undefined) {
-        if (typeof production !== "boolean") throw bad("production must be true or false.");
-        db.prepare("UPDATE targets SET production = ? WHERE id = ?").run(production ? 1 : 0, id);
-      }
-      if (failOn !== undefined) db.prepare("UPDATE targets SET fail_on = ? WHERE id = ?").run(failOnOf(failOn), id);
-      return presentTarget(targetRow(id));
-    },
-
     deleteTarget(id: string) {
-      if (db.prepare("DELETE FROM targets WHERE id = ?").run(id).changes === 0) throw notFound("The target");
+      // Only targets added here before the endpoints file was the way in (ADR 0052).
+      if (targetRow(id).source === "file")
+        throw new DastError(409, "conflict", "This target comes from the endpoints file (OPENASY_ENDPOINTS). Remove it there.");
+      db.prepare("DELETE FROM targets WHERE id = ?").run(id);
     },
 
     /** Asks the target for the proof. A target that answers with its secret belongs to whoever can change its files. */

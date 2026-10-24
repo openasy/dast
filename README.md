@@ -16,19 +16,20 @@ CI: nuclei -u https://shop.example.com -se results.sarif  ──POST /api/v1/sca
 ```
 
 [dast-agent](https://github.com/openasy/dast-agent) runs ZAP and Nuclei for you, inside your network: start a scan on
-a target's page or give the target a schedule. dast itself holds no scanner and attacks nothing.
+a target's page, or let the target's schedule start them. dast itself holds no scanner and attacks nothing.
 
 ## Scans by the agent
 
 - **Profiles.** `passive` crawls and watches, with no attacks. `standard` adds ZAP's active rules at low strength and
   Nuclei's templates that are not intrusive. `full` runs every rule of both. A target that is not verified gets only
   passive scans; a full scan of a production target needs an admin.
-- **Schedules.** Daily or weekly per target, with the profile to run; the scan is limited to what the target allows
-  when it runs.
+- **Schedules.** Daily or weekly per target, with the profile to run, both from the endpoints file; the scan is limited
+  to what the target allows when it runs, and uses the target's login.
 - **One report per engine and profile**, such as `zap-standard` or `nuclei-full`, so a passive scan never marks what an
   active one found as fixed.
 - **Logins** let a scan get past the target's sign-in page: a header sent with every request, or a form ZAP fills in.
-  The secret is sealed with `openasy-kek`, never sent back, and given only to the agent running a scan that uses it.
+  The file names an environment variable for the secret, never the secret; dast seals it with `openasy-kek`, never
+  sends it back, and gives it only to the agent running a scan that uses it.
   Nuclei uses a header login and runs signed out with a form login. A form must be sent to the target's own origin.
 - **Agents** enrol with a one-time token from Agents and ask for jobs; a job an agent does not finish within 3 hours goes
   back to the queue, three times at most. A target on a private address is verified by an agent in its network.
@@ -37,6 +38,35 @@ a target's page or give the target a schedule. dast itself holds no scanner and 
 
 A **target** is an address that may be tested, such as `https://shop.example.com`, or with a path to test only a part of
 it. Reports are accepted only for targets that exist, and results outside a target's address are left out and counted.
+
+Targets come from the install's endpoints file, the one Uptime and Certificates read, and from nowhere else (ADR 0052):
+there is no form and no API route that adds or changes one. Mount it and set `OPENASY_ENDPOINTS`; an entry with a
+`dast` block is a target, read at start and again within a minute of a change.
+
+```yaml
+endpoints:
+  - name: shop-staging
+    url: https://staging.shop.example.com
+    dast:
+      production: false            # true: a full scan needs an admin; false by default
+      failOn: high                 # critical, high, medium, low or none; high by default
+      schedule: weekly             # none, daily or weekly; none by default
+      profile: standard            # what the schedule runs: passive, standard or full
+      login:                       # or { kind: header, header: Authorization, secret: DAST_SHOP_TOKEN }
+        kind: form
+        url: https://staging.shop.example.com/login
+        usernameField: email
+        passwordField: password
+        username: scanner@example.com
+        loggedIn: Sign out         # text only a signed-in page shows
+        secret: DAST_SHOP_PASSWORD # the environment variable that holds the password, set from .env
+```
+
+A secret that is not set is a warning, and the target is scanned without its login. A target is changed and removed in
+the file: removing it removes its reports and findings, and the API answers 409 to a delete. Targets added in the UI
+before 0.8.0 keep being scanned, and the Targets page shows the lines to copy into the file; once an entry has the same
+name or address, it takes the target over with its reports, findings and proof. Another address is a new one to prove.
+A file with a mistake is not applied at all, and the Targets page and the log say what to fix.
 
 The owner of an address **proves it is theirs**: serve the text dast shows, on its own, at
 `/.well-known/openasy-dast` of the target, then choose Verify. dast fetches it over the public internet, without
@@ -67,7 +97,7 @@ docker compose logs dast | grep 'no owner yet'
 Open the link from the log once to create the owner account; there is no default password (ADR 0013). The UI and API
 are on http://localhost:8080, the API reference at http://localhost:8080/api/docs/.
 
-Add a target in the UI, verify it, then send a report from CI:
+List a target in the endpoints file, verify it, then send a report from CI:
 
 ```bash
 nuclei -u https://shop.example.com -se results.sarif
@@ -101,8 +131,8 @@ target deletes it.
 
 ## Roles
 
-Viewers see everything; editors also triage findings and send reports; admins also add, verify, change and delete
-targets, and manage members and API tokens (ADR 0003).
+Viewers see everything; editors also triage findings and send reports; admins also verify targets, delete
+targets added before the file, and manage members and API tokens (ADR 0003).
 
 ## Develop
 
