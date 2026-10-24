@@ -32,6 +32,35 @@ export interface Target {
   suppressed: number;
   lastScan: { at: string; engine: string; new: number; passed: boolean } | null;
   createdAt: string;
+  schedule: Schedule;
+  scheduleProfile: Profile;
+  nextScanAt: string | null;
+}
+
+/** passive sends no attacks; standard and full need a verified target (ADR 0037). */
+export type Profile = "passive" | "standard" | "full";
+export type Schedule = "none" | "daily" | "weekly";
+
+export interface Agent {
+  id: string;
+  name: string;
+  status: "waiting-to-enrol" | "online" | "offline";
+  version: string | null;
+  lastSeen: string | null;
+  createdAt: string;
+}
+
+export interface Job {
+  id: string;
+  target: { id: string; name: string };
+  kind: "scan" | "verify";
+  profile: Profile | null;
+  status: "queued" | "running" | "done" | "failed";
+  attempts: number;
+  error: string | null;
+  requestedBy: string;
+  createdAt: string;
+  finishedAt: string | null;
 }
 
 export interface TriageState {

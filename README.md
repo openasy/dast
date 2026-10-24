@@ -15,8 +15,20 @@ CI: nuclei -u https://shop.example.com -se results.sarif  ──POST /api/v1/sca
                                                                                    └── targets, findings, triage, history
 ```
 
-dast reads SARIF reports and nothing else: it holds no scanner and attacks nothing. Scanners that run for you, in
-`dast-agent` inside your network, come next (ADR 0037).
+[dast-agent](https://github.com/openasy/dast-agent) runs ZAP and Nuclei for you, inside your network: start a scan on
+a target's page or give the target a schedule. dast itself holds no scanner and attacks nothing.
+
+## Scans by the agent
+
+- **Profiles.** `passive` crawls and watches, with no attacks. `standard` adds ZAP's active rules at low strength and
+  Nuclei's templates that are not intrusive. `full` runs every rule of both. A target that is not verified gets only
+  passive scans; a full scan of a production target needs an admin.
+- **Schedules.** Daily or weekly per target, with the profile to run; the scan is limited to what the target allows
+  when it runs.
+- **One report per engine and profile**, such as `zap-standard` or `nuclei-full`, so a passive scan never marks what an
+  active one found as fixed.
+- **Agents** enrol with a one-time token from Agents and ask for jobs; a job an agent does not finish within 3 hours goes
+  back to the queue, three times at most. A target on a private address is verified by an agent in its network.
 
 ## Targets
 

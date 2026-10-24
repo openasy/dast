@@ -11,6 +11,7 @@ export type ProblemCode =
   | "verification-failed"
   | "not-found"
   | "conflict"
+  | "forbidden"
   | "not-configured"
   | "payload-too-large"
   | "internal-error";
@@ -160,6 +161,9 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       open: openCounts(t.id),
       suppressed,
       lastScan: last ? { at: last.created_at as string, engine: last.engine as string, new: last.new_count as number, passed: last.blocking === 0 } : null,
+      schedule: t.schedule as "none" | "daily" | "weekly",
+      scheduleProfile: t.schedule_profile as "passive" | "standard" | "full",
+      nextScanAt: (t.next_scan_at as string | null) ?? null,
       createdAt: t.created_at as string,
     };
   }

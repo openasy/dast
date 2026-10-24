@@ -5,6 +5,7 @@ import { extname, join, normalize } from "node:path";
 import type { DatabaseSync } from "node:sqlite";
 import { createGunzip } from "node:zlib";
 import { AuthError, mergeOpenApi, sendProblem, type Auth, type Role } from "@openasy/auth";
+import type { Agents } from "./agents.ts";
 import { log } from "./log.ts";
 import { countRequest, renderMetrics } from "./metrics.ts";
 import type { ProductLink } from "./products.ts";
@@ -14,6 +15,8 @@ import { parseLimit, DastError, SEVERITIES, type FindingFilter, type ProblemCode
 export interface AppOptions {
   db: DatabaseSync;
   dast: Dast;
+  /** dast-agent, its queue and the targets' schedules (ADR 0037). */
+  agents: Agents;
   version: string;
   /** Sign-in, sessions, members and API tokens (ADR 0002, 0003). */
   auth: Auth;
@@ -89,6 +92,7 @@ const TITLES: Record<ProblemCode, string> = {
   "verification-failed": "Verification failed",
   "not-found": "Not found",
   conflict: "Conflict",
+  forbidden: "Forbidden",
   "not-configured": "Not configured",
   "payload-too-large": "Payload too large",
   "internal-error": "Internal error",
@@ -154,8 +158,8 @@ function tokenMatches(header: string | undefined, expected: string | undefined):
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-/** The role a route needs (ADR 0003), or "ingest" for scans sent from CI. */
-type Access = "none" | "ingest" | Role;
+/** The role a route needs (ADR 0003), "ingest" for scans sent from CI, or "agent" for an enrolled dast-agent. */
+type Access = "none" | "ingest" | "agent" | Role;
 interface Ctx {
   req: IncomingMessage;
   res: ServerResponse;
@@ -164,6 +168,10 @@ interface Ctx {
   body: () => Promise<Record<string, unknown>>;
   /** Who made the request, for the audit trail of a decision. */
   actor: () => string;
+  /** On "agent" routes: the enrolled dast-agent that sent the request. */
+  agent: string;
+  /** Whether the caller has the admin role. */
+  isAdmin: () => boolean;
 }
 interface Route {
   method: string;
@@ -185,7 +193,20 @@ function findingFilter(url: URL, targetId?: string): FindingFilter {
   return { status: status as Status, severity, q: q || undefined, targetId: targetId ?? url.searchParams.get("target") ?? undefined };
 }
 
-export function createApp({ db, dast, version, auth, adminToken, ingestToken, webDir, docsDir, openapi, serveMetrics = true, products = [] }: AppOptions) {
+export function createApp({
+  db,
+  dast,
+  agents,
+  version,
+  auth,
+  adminToken,
+  ingestToken,
+  webDir,
+  docsDir,
+  openapi,
+  serveMetrics = true,
+  products = [],
+}: AppOptions) {
   // The served description includes /api/v1/auth from @openasy/auth, so the API reference documents sign-in too.
   const spec = openapi && JSON.stringify({ ...mergeOpenApi(openapi), info: { ...(openapi.info as object), version } });
   const noContent = (res: ServerResponse) => {
@@ -217,9 +238,85 @@ export function createApp({ db, dast, version, auth, adminToken, ingestToken, we
     { method: "GET", path: "/api/v1/targets", auth: "viewer", handle: ({ url }) => page("targets", dast.listTargets(cursor(url), limit(url))) },
     { method: "POST", path: "/api/v1/targets", auth: "admin", handle: async ({ res, body }) => json(res, 201, dast.createTarget(await body())) },
     { method: "GET", path: "/api/v1/targets/:id", auth: "viewer", handle: ({ params }) => dast.target(params[0]!) },
-    { method: "PATCH", path: "/api/v1/targets/:id", auth: "admin", handle: async ({ params, body }) => dast.updateTarget(params[0]!, await body()) },
+    {
+      method: "PATCH",
+      path: "/api/v1/targets/:id",
+      auth: "admin",
+      handle: async ({ params, body }) => {
+        const { schedule, scheduleProfile, ...rest } = await body();
+        if (schedule !== undefined || scheduleProfile !== undefined) {
+          dast.target(params[0]!);
+          agents.setSchedule(params[0]!, { schedule, scheduleProfile });
+          if (Object.keys(rest).length) dast.updateTarget(params[0]!, rest);
+          return dast.target(params[0]!);
+        }
+        return dast.updateTarget(params[0]!, rest);
+      },
+    },
     { method: "DELETE", path: "/api/v1/targets/:id", auth: "admin", handle: ({ res, params }) => (dast.deleteTarget(params[0]!), noContent(res)) },
-    { method: "POST", path: "/api/v1/targets/:id/verify", auth: "admin", handle: ({ params }) => dast.verify(params[0]!) },
+    {
+      method: "POST",
+      path: "/api/v1/targets/:id/verify",
+      auth: "admin",
+      handle: async ({ params, actor }) => {
+        try {
+          return await dast.verify(params[0]!);
+        } catch (err) {
+          // dast cannot reach a private address; an agent in that network reads the proof instead.
+          if (err instanceof DastError && /private address/.test(err.message) && agents.queueVerify(params[0]!, actor()))
+            throw new DastError(
+              422,
+              "verification-failed",
+              `${err.message.replace(/^Could not read the proof: /, "").replace(/;.*$/, "")}: an agent reads the proof now, and the target is verified once it has. See Scans, queue.`,
+            );
+          throw err;
+        }
+      },
+    },
+    // Scans run by dast-agent: by hand here, or by the target's schedule.
+    {
+      method: "POST",
+      path: "/api/v1/targets/:id/scan",
+      auth: "editor",
+      handle: async ({ res, params, body, actor, isAdmin }) => json(res, 201, agents.scanNow(params[0]!, await body(), actor(), isAdmin())),
+    },
+    {
+      method: "GET",
+      path: "/api/v1/jobs",
+      auth: "viewer",
+      handle: ({ url }) => ({ jobs: agents.listJobs({ targetId: url.searchParams.get("target") ?? undefined }) }),
+    },
+    { method: "GET", path: "/api/v1/agents", auth: "admin", handle: () => ({ agents: agents.listAgents() }) },
+    { method: "POST", path: "/api/v1/agents", auth: "admin", handle: async ({ res, body }) => json(res, 201, agents.createAgent(await body())) },
+    { method: "DELETE", path: "/api/v1/agents/:id", auth: "admin", handle: ({ res, params }) => (agents.deleteAgent(params[0]!), noContent(res)) },
+    // dast-agent: enrol once with the token, then ask for work and send back what each engine found.
+    { method: "POST", path: "/api/v1/agent/enroll", auth: "none", handle: async ({ body }) => agents.enroll(await body()) },
+    { method: "POST", path: "/api/v1/agent/work", auth: "agent", handle: async ({ agent, body }) => agents.work(agent, (await body()).version) },
+    {
+      method: "POST",
+      path: "/api/v1/agent/jobs/:id/sarif",
+      auth: "agent",
+      handle: async ({ req, res, url, agent, params }) =>
+        json(res, 201, agents.report(agent, params[0]!, url.searchParams.get("engine"), await readBody(req, SARIF_LIMIT))),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/agent/jobs/:id/done",
+      auth: "agent",
+      handle: ({ res, agent, params }) => (agents.finish(agent, params[0]!), noContent(res)),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/agent/jobs/:id/failed",
+      auth: "agent",
+      handle: async ({ res, agent, params, body }) => (agents.fail(agent, params[0]!, await body()), noContent(res)),
+    },
+    {
+      method: "POST",
+      path: "/api/v1/agent/jobs/:id/proof",
+      auth: "agent",
+      handle: async ({ res, agent, params, body }) => (agents.proof(agent, params[0]!, await body()), noContent(res)),
+    },
     {
       method: "GET",
       path: "/api/v1/targets/:id/scans",
@@ -254,6 +351,11 @@ export function createApp({ db, dast, version, auth, adminToken, ingestToken, we
   /** Returns who is calling, or null for the ingest token. */
   function authorize(req: IncomingMessage, access: Access): string | null {
     if (access === "none") return null;
+    if (access === "agent") {
+      const agent = agents.agentBySecret(req.headers.authorization);
+      if (!agent) throw new DastError(401, "invalid-token", "Send the agent's own secret, from enrolment, as a bearer token.");
+      return agent;
+    }
     if (access === "ingest" && tokenMatches(req.headers.authorization, ingestToken)) return null;
     if (tokenMatches(req.headers.authorization, adminToken)) return "admin token";
     if (access === "ingest") {
@@ -311,7 +413,16 @@ export function createApp({ db, dast, version, auth, adminToken, ingestToken, we
       try {
         const who = authorize(req, r.auth);
         const params = m.slice(1).map(decodeURIComponent);
-        const result = await r.handle({ req, res, url, params, body: () => readJson(req), actor: () => who ?? "unknown" });
+        const isAdmin = () => {
+          if (who === "admin token") return true;
+          try {
+            auth.authorize(req, "admin");
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const result = await r.handle({ req, res, url, params, body: () => readJson(req), actor: () => who ?? "unknown", agent: who ?? "", isAdmin });
         if (!res.headersSent && result !== undefined) json(res, 200, result);
       } catch (err) {
         if (err instanceof AuthError) {

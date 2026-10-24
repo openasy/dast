@@ -32,6 +32,10 @@
     {
       "name": "Product",
       "description": "Version and overview of this dast."
+    },
+    {
+      "name": "Agents",
+      "description": "dast-agent runs ZAP and Nuclei where the targets are, and its queue of scans (ADR 0037)."
     }
   ],
   "paths": {
@@ -505,7 +509,7 @@
             "adminToken": []
           }
         ],
-        "description": "Fetches `/.well-known/openasy-dast` from the target's origin over the public internet, without following redirects, and compares it with the verification content. Addresses on private networks are refused: an agent in that network verifies them.\n\nNeeds the admin role.",
+        "description": "Fetches `/.well-known/openasy-dast` from the target's origin over the public internet, without following redirects, and compares it with the verification content. Addresses on private networks are refused: an agent in that network verifies them.\n\nNeeds the admin role.\n\nA target on a private address is read by an enrolled dast-agent in its network instead: the answer is then 422 saying so, a verify job waits in the queue, and the target is verified once the agent has read the proof.",
         "parameters": [
           {
             "name": "id",
@@ -545,6 +549,74 @@
           }
         },
         "x-openasy-role": "admin"
+      }
+    },
+    "/api/v1/targets/{id}/scan": {
+      "post": {
+        "operationId": "scanTarget",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Start a scan",
+        "description": "Queues a scan of the target for dast-agent. A target that is not verified gets only a passive scan; asking for more is 409. A full scan of a production target needs an admin; an editor gets 403. One waiting scan per target: asking again changes its profile.\n\nNeeds the editor role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewJob"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Queued.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Job"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
       }
     },
     "/api/v1/targets/{id}/scans": {
@@ -1121,6 +1193,468 @@
           }
         }
       }
+    },
+    "/api/v1/jobs": {
+      "get": {
+        "operationId": "listJobs",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Scans in the queue",
+        "description": "The latest 200 scan and verify jobs, newest first; `target` narrows them to one target's id. A job an agent took and did not finish goes back to the queue, three times at most.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "target",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The jobs.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agents": {
+      "get": {
+        "operationId": "listAgents",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents",
+        "description": "Needs the admin role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The agents.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentList"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      },
+      "post": {
+        "operationId": "createAgent",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Add an agent",
+        "description": "Returns a one-time enrolment token, valid for 7 days and shown once, for DAST_ENROLL_TOKEN of the new dast-agent. Needs the admin role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NewAgent"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Added.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CreatedAgent"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{id}": {
+      "delete": {
+        "operationId": "deleteAgent",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Remove an agent",
+        "description": "Its secret stops working. Needs the admin role.",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Removed."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agent/enroll": {
+      "post": {
+        "operationId": "agentEnroll",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Enrol (dast-agent)",
+        "description": "Trades the one-time token for the agent's own secret.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Enroll"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Enrolled.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Enrolled"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agent/work": {
+      "post": {
+        "operationId": "agentWork",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Ask for work (dast-agent)",
+        "description": "The next job, leased to this agent for 3 hours, with the address and the profile the target allows now.",
+        "security": [
+          {
+            "agentSecret": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobFailed"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Zero or one job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Work"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agent/jobs/{id}/sarif": {
+      "post": {
+        "operationId": "agentSarif",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Send one engine's report (dast-agent)",
+        "description": "The SARIF of one engine for a running scan job. Reports are kept per engine and profile, such as zap-standard, so a passive scan never fixes what an active one found.",
+        "security": [
+          {
+            "agentSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "engine",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "zap",
+                "nuclei"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Compared with what the engine reported before. `passed` says whether the check passes.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NewScan"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "413": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "A SARIF 2.1.0 log."
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/agent/jobs/{id}/done": {
+      "post": {
+        "operationId": "agentDone",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Finish a job (dast-agent)",
+        "description": "After every engine's report.",
+        "security": [
+          {
+            "agentSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Done."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agent/jobs/{id}/failed": {
+      "post": {
+        "operationId": "agentFailed",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Report a failed job (dast-agent)",
+        "description": "Why the scan or the verification could not finish.",
+        "security": [
+          {
+            "agentSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobFailed"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Recorded."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
+    },
+    "/api/v1/agent/jobs/{id}/proof": {
+      "post": {
+        "operationId": "agentProof",
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Send the proof read (dast-agent)",
+        "description": "What the agent read at the target's proof address. The target is verified when it is the target's content; otherwise the job fails.",
+        "security": [
+          {
+            "agentSecret": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Proof"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Compared."
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "422": {
+            "$ref": "#/components/responses/Problem"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1134,7 +1668,7 @@
       "apiToken": {
         "type": "http",
         "scheme": "bearer",
-        "description": "An API token created under Settings \u2192 API tokens (`oa_dast_...`): one role, always an expiry (ADR 0003)."
+        "description": "An API token created under Settings → API tokens (`oa_dast_...`): one role, always an expiry (ADR 0003)."
       },
       "adminToken": {
         "type": "http",
@@ -1145,6 +1679,11 @@
         "type": "http",
         "scheme": "bearer",
         "description": "`DAST_INGEST_TOKEN`: for CI. It can send scans, nothing else."
+      },
+      "agentSecret": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "The secret a dast-agent got when it enrolled (oda_...)."
       }
     },
     "responses": {
@@ -1460,7 +1999,10 @@
           "open",
           "suppressed",
           "lastScan",
-          "createdAt"
+          "createdAt",
+          "schedule",
+          "scheduleProfile",
+          "nextScanAt"
         ],
         "additionalProperties": false,
         "properties": {
@@ -1566,6 +2108,20 @@
           "createdAt": {
             "type": "string",
             "format": "date-time"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "scheduleProfile": {
+            "$ref": "#/components/schemas/Profile"
+          },
+          "nextScanAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the schedule queues the next scan."
           }
         }
       },
@@ -1624,6 +2180,12 @@
           },
           "failOn": {
             "$ref": "#/components/schemas/FailOn"
+          },
+          "schedule": {
+            "$ref": "#/components/schemas/Schedule"
+          },
+          "scheduleProfile": {
+            "$ref": "#/components/schemas/Profile"
           }
         }
       },
@@ -1904,6 +2466,349 @@
           "nextCursor": {
             "type": "string",
             "description": "Pass the previous page's nextCursor to get the next page."
+          }
+        }
+      },
+      "Profile": {
+        "type": "string",
+        "enum": [
+          "passive",
+          "standard",
+          "full"
+        ],
+        "description": "passive: ZAP crawls and only watches, sending no attacks. standard: ZAP's active rules at low strength and Nuclei's templates that are not intrusive. full: every rule of both, at medium strength."
+      },
+      "Schedule": {
+        "type": "string",
+        "enum": [
+          "none",
+          "daily",
+          "weekly"
+        ]
+      },
+      "Job": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "target",
+          "kind",
+          "profile",
+          "status",
+          "attempts",
+          "error",
+          "requestedBy",
+          "createdAt",
+          "finishedAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "target": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "name"
+            ],
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "name": {
+                "type": "string"
+              }
+            }
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "scan",
+              "verify"
+            ]
+          },
+          "profile": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Profile"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "running",
+              "done",
+              "failed"
+            ]
+          },
+          "attempts": {
+            "type": "integer"
+          },
+          "error": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "requestedBy": {
+            "type": "string",
+            "description": "Who started it, or schedule."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "finishedAt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "JobList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Job"
+            }
+          }
+        }
+      },
+      "NewJob": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "profile": {
+            "$ref": "#/components/schemas/Profile"
+          }
+        }
+      },
+      "Agent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "status",
+          "version",
+          "lastSeen",
+          "createdAt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "waiting-to-enrol",
+              "online",
+              "offline"
+            ]
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "lastSeen": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AgentList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agents"
+        ],
+        "properties": {
+          "agents": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Agent"
+            }
+          }
+        }
+      },
+      "NewAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9.-]{0,62}$"
+          }
+        }
+      },
+      "CreatedAgent": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "agent",
+          "enrollToken"
+        ],
+        "properties": {
+          "agent": {
+            "$ref": "#/components/schemas/Agent"
+          },
+          "enrollToken": {
+            "type": "string",
+            "description": "One-time, for 7 days; shown once."
+          }
+        }
+      },
+      "Enroll": {
+        "type": "object",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        }
+      },
+      "Enrolled": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "name",
+          "secret"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "secret": {
+            "type": "string",
+            "description": "The agent's own secret; only its hash is kept."
+          }
+        }
+      },
+      "Work": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "jobs"
+        ],
+        "properties": {
+          "jobs": {
+            "type": "array",
+            "maxItems": 1,
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "id",
+                "kind",
+                "target",
+                "profile"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "scan",
+                    "verify"
+                  ]
+                },
+                "target": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "name",
+                    "url",
+                    "production"
+                  ],
+                  "properties": {
+                    "name": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "production": {
+                      "type": "boolean"
+                    }
+                  }
+                },
+                "profile": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/Profile"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "proofUrl": {
+                  "type": "string",
+                  "description": "For verify: where the proof is."
+                }
+              }
+            }
+          }
+        }
+      },
+      "JobFailed": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string",
+            "maxLength": 1000
+          }
+        }
+      },
+      "Proof": {
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "string",
+            "maxLength": 256
           }
         }
       }

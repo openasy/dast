@@ -4,6 +4,7 @@ import { createAuth } from "@openasy/auth";
 import type { AddressInfo } from "node:net";
 import { createApp, type AppOptions } from "./app.ts";
 import { openDb } from "./db.ts";
+import { createAgents } from "./agents.ts";
 import { createDast } from "./dast.ts";
 import type { Verifier } from "./verify.ts";
 
@@ -66,7 +67,8 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   const base = `http://localhost:${(server.address() as AddressInfo).port}`;
   const auth = createAuth({ db, product: "dast", productName: "OpenAsy DAST", origin: base });
   const { site: _site, ...rest } = opts;
-  handler = createApp({ db, dast, auth, ingestToken: INGEST_TOKEN, adminToken: ADMIN_TOKEN, ...rest });
+  const agents = createAgents(db, dast);
+  handler = createApp({ db, dast, agents, auth, ingestToken: INGEST_TOKEN, adminToken: ADMIN_TOKEN, ...rest });
   const as =
     (token: string) =>
     (path: string, init: RequestInit = {}) =>
@@ -76,5 +78,5 @@ export async function startApp(opts: Partial<AppOptions> & { version: string; si
   /** Sends a report the way CI does. */
   const scan = (query: Record<string, string>, body: string | Buffer) => ingest(`/api/v1/scans?${new URLSearchParams(query)}`, { method: "POST", body });
   const close = () => new Promise<void>((resolve) => server.close(() => resolve()));
-  return { db, dast, auth, base, admin, ingest, scan, site, close };
+  return { db, dast, agents, auth, base, admin, ingest, scan, site, close };
 }

@@ -56,6 +56,38 @@ const MIGRATIONS = [
      PRIMARY KEY (target_id, fingerprint)
    );
    CREATE INDEX findings_open ON findings (target_id, severity) WHERE resolved_at IS NULL`,
+  // dast-agent runs ZAP and Nuclei where the targets are (ADR 0037): agents enrol with a one-time token, and scans
+  // started by hand or by a target's schedule wait in a queue for them. A verify job reads the proof of a target on a
+  // private address, which dast itself cannot reach.
+  `CREATE TABLE agents (
+     id TEXT PRIMARY KEY,
+     name TEXT NOT NULL UNIQUE,
+     enroll_token_hash TEXT,
+     enroll_expires_at TEXT,
+     secret_hash TEXT,
+     version TEXT,
+     last_seen TEXT,
+     created_at TEXT NOT NULL
+   );
+   CREATE TABLE scan_jobs (
+     id TEXT PRIMARY KEY,
+     target_id TEXT NOT NULL REFERENCES targets (id) ON DELETE CASCADE,
+     kind TEXT NOT NULL CHECK (kind IN ('scan', 'verify')),
+     profile TEXT CHECK (profile IN ('passive', 'standard', 'full')),
+     status TEXT NOT NULL CHECK (status IN ('queued', 'running', 'done', 'failed')),
+     agent_id TEXT REFERENCES agents (id) ON DELETE SET NULL,
+     lease_until TEXT,
+     attempts INTEGER NOT NULL DEFAULT 0,
+     error TEXT,
+     requested_by TEXT NOT NULL,
+     created_at TEXT NOT NULL,
+     finished_at TEXT
+   );
+   CREATE INDEX scan_jobs_queue ON scan_jobs (status, created_at);
+   CREATE INDEX scan_jobs_target ON scan_jobs (target_id, created_at DESC);
+   ALTER TABLE targets ADD COLUMN schedule TEXT NOT NULL DEFAULT 'none' CHECK (schedule IN ('none', 'daily', 'weekly'));
+   ALTER TABLE targets ADD COLUMN schedule_profile TEXT NOT NULL DEFAULT 'standard' CHECK (schedule_profile IN ('passive', 'standard', 'full'));
+   ALTER TABLE targets ADD COLUMN next_scan_at TEXT;`,
 ];
 
 /** Opens the product's single SQLite file in WAL mode (ADR 0011) and migrates it forward. */

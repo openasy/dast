@@ -28,13 +28,17 @@ import {
   useAgo,
 } from "@openasy/ui";
 import { AccountSettings, AuthGate, MembersSettings, SignInSettings, TokensSettings, useAuth, useInstallBrand } from "@openasy/auth/react";
-import { Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Plus, Settings2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
+import { Bot, Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Play, Plus, Settings2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import {
   api,
   MfaSetupRequired,
   Unauthorized,
+  type Agent,
   type FailOn,
+  type Job,
+  type Profile,
+  type Schedule,
   type Finding,
   type ProductLink,
   type Scan,
@@ -44,7 +48,7 @@ import {
 } from "./api.ts";
 import { useT, type T } from "./i18n.ts";
 
-const PAGES = ["targets", "setup", "account", "members", "signin", "tokens"] as const;
+const PAGES = ["targets", "agents", "setup", "account", "members", "signin", "tokens"] as const;
 type Route = { page: "findings" | (typeof PAGES)[number] } | { page: "target"; id: string };
 /** The first path segments that are pages of this UI, for followLinks. */
 export const PATHS = ["findings", ...PAGES];
@@ -711,6 +715,7 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
           </Dialog>
         </Panel>
       )}
+      {target && <AgentScans key={`${target.verified}`} call={call} target={target} onChanged={load} />}
       <FindingsTable call={call} targetId={id} summary={target ?? undefined} reload={() => (load(), reload())} />
       <Panel title={msg("targetPage.reports")} flush>
         <DataTable
@@ -723,6 +728,281 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
           empty={<EmptyState title={msg("targetPage.noReports")}>{msg("targetPage.nothingHasBeenSentFor")}</EmptyState>}
         />
       </Panel>
+    </>
+  );
+}
+
+const JOB_TONE = { queued: "neutral", running: "info", done: "success", failed: "danger" } as const;
+
+/** Scans run by dast-agent for one target: start one, set its schedule, and the latest jobs (ADR 0037). */
+function AgentScans({ call, target, onChanged }: { call: Call; target: Target; onChanged: () => void }) {
+  const ago = useAgo();
+  const msg = useT();
+  const { can } = useAuth();
+  const [profile, setProfile] = useState<Profile>(target.verified ? "standard" : "passive");
+  const [schedule, setSchedule] = useState<Schedule>(target.schedule);
+  const [scheduleProfile, setScheduleProfile] = useState<Profile>(target.scheduleProfile);
+  const [jobs, setJobs] = useState<Job[]>();
+  const [error, setError] = useState<string>();
+  const loadJobs = useCallback(
+    () =>
+      void call<{ jobs: Job[] }>(`/api/v1/jobs?target=${target.id}`).then(
+        (r) => setJobs(r.jobs.slice(0, 10)),
+        () => setJobs([]),
+      ),
+    [call, target.id],
+  );
+  useEffect(() => {
+    loadJobs();
+    const timer = setInterval(loadJobs, 10_000);
+    return () => clearInterval(timer);
+  }, [loadJobs]);
+  const profiles = (verified: boolean) =>
+    (["passive", "standard", "full"] as const).map((p) => ({
+      value: p,
+      label: msg(`agentScans.profile.${p}`) + (p !== "passive" && !verified ? msg("agentScans.afterVerification") : ""),
+    }));
+  const start = async () => {
+    try {
+      await call(`/api/v1/targets/${target.id}/scan`, { method: "POST", body: JSON.stringify({ profile }) });
+      setError(undefined);
+      loadJobs();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const saveSchedule = async () => {
+    try {
+      await call(`/api/v1/targets/${target.id}`, { method: "PATCH", body: JSON.stringify({ schedule, scheduleProfile }) });
+      setError(undefined);
+      onChanged();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const columns: Column<Job>[] = [
+    { id: "when", header: msg("agentScans.queued"), cell: (j) => <span className="text-xs whitespace-nowrap">{ago(j.createdAt)}</span> },
+    {
+      id: "what",
+      header: msg("agentScans.what"),
+      cell: (j) => <Badge>{j.kind === "verify" ? msg("agentScans.verification") : msg(`agentScans.profile.${j.profile ?? "passive"}`)}</Badge>,
+    },
+    {
+      id: "status",
+      header: msg("agentScans.status"),
+      cell: (j) => (
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span>
+            <StatusBadge tone={JOB_TONE[j.status]}>{msg(`agentScans.job.${j.status}`)}</StatusBadge>
+          </span>
+          {j.error && <span className="dast-wrap text-xs text-fg-muted">{j.error}</span>}
+        </span>
+      ),
+    },
+    {
+      id: "by",
+      header: msg("agentScans.by"),
+      cell: (j) => <span className="text-xs">{j.requestedBy === "schedule" ? msg("agentScans.schedule") : j.requestedBy}</span>,
+    },
+  ];
+  return (
+    <Panel title={msg("agentScans.title")} description={msg("agentScans.description")}>
+      <div className="flex flex-col gap-3">
+        {can("editor") && (
+          <div className="flex flex-wrap items-end gap-2">
+            <SelectField
+              label={msg("agentScans.scan")}
+              value={profile}
+              onChange={(e) => setProfile(e.target.value as Profile)}
+              options={profiles(target.verified)}
+            />
+            <Button variant="primary" icon={<Play />} onClick={() => void start()}>
+              {msg("agentScans.scanNow")}
+            </Button>
+          </div>
+        )}
+        {can("admin") && (
+          <div className="flex flex-wrap items-end gap-2">
+            <SelectField
+              label={msg("agentScans.schedule")}
+              value={schedule}
+              onChange={(e) => setSchedule(e.target.value as Schedule)}
+              options={(["none", "daily", "weekly"] as const).map((s) => ({ value: s, label: msg(`agentScans.every.${s}`) }))}
+            />
+            <SelectField
+              label={msg("agentScans.scheduledScan")}
+              value={scheduleProfile}
+              onChange={(e) => setScheduleProfile(e.target.value as Profile)}
+              options={profiles(target.verified)}
+            />
+            <Button onClick={() => void saveSchedule()} disabled={schedule === target.schedule && scheduleProfile === target.scheduleProfile}>
+              {msg("agentScans.saveSchedule")}
+            </Button>
+            {target.nextScanAt && (
+              <span className="text-xs text-fg-muted">{msg("agentScans.next", { when: new Date(target.nextScanAt).toLocaleString() })}</span>
+            )}
+          </div>
+        )}
+        {error && <span className="text-xs text-danger">{error}</span>}
+        <DataTable
+          label={msg("agentScans.title")}
+          columns={columns}
+          rows={jobs ?? []}
+          loading={!jobs}
+          getRowId={(j) => j.id}
+          minWidth={560}
+          empty={<EmptyState title={msg("agentScans.noJobs")}>{msg("agentScans.noJobsDetail")}</EmptyState>}
+        />
+      </div>
+    </Panel>
+  );
+}
+
+// ---------------------------------------------------------------- Agents
+
+const AGENT_TONE = { "waiting-to-enrol": "warning", online: "success", offline: "danger" } as const;
+
+/** The dast-agents of this install and the whole queue. */
+function AgentsPage({ call }: { call: Call }) {
+  const ago = useAgo();
+  const msg = useT();
+  const [agents, setAgents] = useState<Agent[]>();
+  const [jobs, setJobs] = useState<Job[]>();
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string>();
+  const [enrolment, setEnrolment] = useState<{ name: string; token: string }>();
+  const load = useCallback(() => {
+    call<{ agents: Agent[] }>("/api/v1/agents").then(
+      (r) => setAgents(r.agents),
+      () => setAgents([]),
+    );
+    call<{ jobs: Job[] }>("/api/v1/jobs").then(
+      (r) => setJobs(r.jobs),
+      () => setJobs([]),
+    );
+  }, [call]);
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 10_000);
+    return () => clearInterval(timer);
+  }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault();
+    try {
+      const r = await call<{ agent: Agent; enrollToken: string }>("/api/v1/agents", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+      setEnrolment({ name: r.agent.name, token: r.enrollToken });
+      setName("");
+      setError(undefined);
+      load();
+    } catch (err) {
+      setError((err as Error).message);
+    }
+  };
+  const remove = (a: Agent) => call(`/api/v1/agents/${a.id}`, { method: "DELETE" }).then(load, () => {});
+  const agentColumns: Column<Agent>[] = [
+    { id: "name", header: msg("agentsPage.name"), mono: true, cell: (a) => a.name },
+    {
+      id: "status",
+      header: msg("agentsPage.status"),
+      cell: (a) => <StatusBadge tone={AGENT_TONE[a.status]}>{msg(`agentsPage.agent.${a.status}`)}</StatusBadge>,
+    },
+    { id: "version", header: msg("agentsPage.version"), mono: true, cell: (a) => a.version ?? "–" },
+    { id: "seen", header: msg("agentsPage.lastSeen"), cell: (a) => <span className="text-xs">{a.lastSeen ? ago(a.lastSeen) : "–"}</span> },
+    {
+      id: "remove",
+      header: <span className="sr-only">{msg("agentsPage.actions")}</span>,
+      width: "56px",
+      cell: (a) => (
+        <IconButton label={msg("agentsPage.remove", { name: a.name })} size="sm" onClick={() => void remove(a)}>
+          <Trash2 />
+        </IconButton>
+      ),
+    },
+  ];
+  const jobColumns: Column<Job>[] = [
+    { id: "target", header: msg("agentsPage.target"), cell: (j) => <a href={`/targets/${j.target.id}`}>{j.target.name}</a> },
+    {
+      id: "what",
+      header: msg("agentScans.what"),
+      cell: (j) => <Badge>{j.kind === "verify" ? msg("agentScans.verification") : msg(`agentScans.profile.${j.profile ?? "passive"}`)}</Badge>,
+    },
+    {
+      id: "status",
+      header: msg("agentScans.status"),
+      cell: (j) => (
+        <span className="flex min-w-0 flex-col gap-0.5">
+          <span>
+            <StatusBadge tone={JOB_TONE[j.status]}>{msg(`agentScans.job.${j.status}`)}</StatusBadge>
+          </span>
+          {j.error && <span className="dast-wrap text-xs text-fg-muted">{j.error}</span>}
+        </span>
+      ),
+    },
+    {
+      id: "when",
+      header: msg("agentScans.queued"),
+      sortValue: (j) => j.createdAt,
+      cell: (j) => <span className="text-xs whitespace-nowrap">{ago(j.createdAt)}</span>,
+    },
+  ];
+  const origin = window.location.origin;
+  return (
+    <>
+      <PageHeader title={msg("agentsPage.title")} description={msg("agentsPage.description")} />
+      <Panel title={msg("agentsPage.agents")} flush>
+        <DataTable
+          label={msg("agentsPage.agents")}
+          columns={agentColumns}
+          rows={agents ?? []}
+          loading={!agents}
+          getRowId={(a) => a.id}
+          minWidth={560}
+          empty={<EmptyState title={msg("agentsPage.noAgents")}>{msg("agentsPage.noAgentsDetail")}</EmptyState>}
+        />
+        <form className="flex flex-wrap items-end gap-2 border-t border-line p-3" onSubmit={(e) => void add(e)}>
+          <TextField
+            label={msg("agentsPage.agentName")}
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            hint={msg("agentsPage.agentNameHint")}
+            error={error}
+            mono
+          />
+          <Button type="submit" icon={<Plus />} disabled={!name.trim()}>
+            {msg("agentsPage.addAgent")}
+          </Button>
+        </form>
+      </Panel>
+      <Panel title={msg("agentsPage.queue")} description={msg("agentsPage.queueDescription")} flush>
+        <DataTable
+          label={msg("agentsPage.queue")}
+          columns={jobColumns}
+          rows={jobs ?? []}
+          loading={!jobs}
+          getRowId={(j) => j.id}
+          minWidth={640}
+          pageSize={25}
+          empty={<EmptyState title={msg("agentScans.noJobs")}>{msg("agentScans.noJobsDetail")}</EmptyState>}
+        />
+      </Panel>
+      <Dialog
+        open={!!enrolment}
+        onOpenChange={(open) => !open && setEnrolment(undefined)}
+        title={msg("agentsPage.start", { name: enrolment?.name ?? "" })}
+        description={msg("agentsPage.startDescription")}
+        footer={
+          <Button type="button" variant="primary" onClick={() => setEnrolment(undefined)}>
+            {msg("agentsPage.done")}
+          </Button>
+        }
+      >
+        <Code>{`openssl rand -hex 32 > openasy-agent-kek
+docker run -d --name dast-agent --restart unless-stopped --read-only --tmpfs /tmp:size=1g \\
+  --cap-drop ALL --security-opt no-new-privileges --memory 3g \\
+  -v dast-agent-data:/data -v "$PWD/openasy-agent-kek:/run/secrets/openasy-agent-kek:ro" \\
+  -e DAST_URL=${origin} -e DAST_ENROLL_TOKEN=${enrolment?.token ?? ""} \\
+  ghcr.io/openasy/dast-agent:${__APP_VERSION__}`}</Code>
+      </Dialog>
     </>
   );
 }
@@ -834,6 +1114,7 @@ function Product() {
   const nav = [
     { id: "findings", label: msg("product.findings"), icon: Bug },
     { id: "targets", label: msg("product.targets"), icon: Crosshair, count: summary?.targets },
+    ...(can("admin") ? [{ id: "agents", label: msg("product.agents"), icon: Bot }] : []),
   ];
   const footerNav = [
     { id: "setup", label: msg("product.setup"), icon: Settings2 },
@@ -871,6 +1152,12 @@ function Product() {
         <FindingsPage call={call} summary={summary} reload={reload} />
       ) : route.page === "targets" ? (
         <TargetsPage call={call} reload={reload} />
+      ) : route.page === "agents" ? (
+        can("admin") ? (
+          <AgentsPage call={call} />
+        ) : (
+          <EmptyState title={msg("settingsPage.adminsOnly")}>{msg("settingsPage.askAnAdminOfThis")}</EmptyState>
+        )
       ) : route.page === "target" ? (
         <TargetPage key={route.id} call={call} id={route.id} reload={reload} />
       ) : route.page === "account" || route.page === "members" || route.page === "signin" || route.page === "tokens" ? (

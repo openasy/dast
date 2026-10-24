@@ -1,7 +1,11 @@
-# DAST. CI sends SARIF reports from ZAP or Nuclei and gets back whether the check passes (ADR 0037).
+# DAST and one dast-agent. The agent runs ZAP and Nuclei against targets proven to be yours, by hand or on a schedule;
+# CI can send SARIF reports too, and gets back whether the check passes (ADR 0037).
 #
-#   openssl rand -hex 32 > openasy-kek   # dast's key: sign-in secrets (ADR 0021). Keep it with your backups
-#   docker compose up -d
+#   openssl rand -hex 32 > openasy-kek         # dast's key: sign-in secrets (ADR 0021)
+#   openssl rand -hex 32 > openasy-agent-kek   # the agent's key: its own secret. Keep both with your backups
+#   docker compose up -d dast
+#   # Agents, Add agent, then:
+#   DAST_ENROLL_TOKEN=ode_... docker compose up -d dast-agent
 #   docker compose logs dast | grep 'no owner yet'   # the one-time link that creates the owner account
 services:
   dast:
@@ -27,9 +31,30 @@ services:
       # OPENASY_OIDC_CLIENT_ID: dast
       # OPENASY_OIDC_CLIENT_SECRET: ${OPENASY_OIDC_CLIENT_SECRET}
 
+  dast-agent:
+    image: ghcr.io/openasy/dast-agent:0.4.0 # always the same version as dast
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:size=1g"] # ZAP's and Nuclei's home for one scan
+    mem_limit: 3g
+    volumes:
+      - dast-agent-data:/data # its secret, sealed with its own key
+    secrets:
+      - source: openasy-agent-kek
+    environment:
+      DAST_URL: http://dast:8080
+      # One-time, from Agents; only needed for the first start.
+      DAST_ENROLL_TOKEN: ${DAST_ENROLL_TOKEN:-}
+    depends_on: [dast]
+
 volumes:
   dast-data:
+  dast-agent-data:
 
 secrets:
   openasy-kek:
     file: ./openasy-kek
+  openasy-agent-kek:
+    file: ./openasy-agent-kek

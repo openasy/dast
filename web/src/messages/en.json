@@ -152,7 +152,8 @@
     "members": "Members",
     "signIn": "Sign-in",
     "apiTokens": "API tokens",
-    "account": "Account"
+    "account": "Account",
+    "agents": "Agents"
   },
   "failOn": {
     "critical": "Critical",
@@ -166,5 +167,66 @@
     "target_other": "{{count}} targets",
     "openFinding_one": "{{count}} open finding",
     "openFinding_other": "{{count}} open findings"
+  },
+  "agentScans": {
+    "title": "Scans by the agent",
+    "description": "dast-agent runs ZAP and Nuclei against this address from its network. Each kind of scan is compared with its own last run.",
+    "profile": {
+      "passive": "Passive: crawl and watch, no attacks",
+      "standard": "Standard: active rules at low strength, safe templates",
+      "full": "Full: every rule and template"
+    },
+    "afterVerification": " (after verification)",
+    "scan": "Scan",
+    "scanNow": "Scan now",
+    "schedule": "Schedule",
+    "scheduledScan": "Scheduled scan",
+    "every": {
+      "none": "Not scheduled",
+      "daily": "Every day",
+      "weekly": "Every week"
+    },
+    "saveSchedule": "Save schedule",
+    "next": "Next: {{when}}",
+    "queued": "Queued",
+    "what": "What",
+    "verification": "Verification",
+    "status": "Status",
+    "by": "By",
+    "job": {
+      "queued": "Queued",
+      "running": "Running",
+      "done": "Done",
+      "failed": "Failed"
+    },
+    "noJobs": "No scans by an agent yet",
+    "noJobsDetail": "Start one here, or set a schedule. An agent must be enrolled under Agents."
+  },
+  "agentsPage": {
+    "title": "Agents",
+    "description": "dast-agent runs ZAP and Nuclei where your applications are, and asks dast for scans. dast never connects to it, and it attacks only targets proven to be yours.",
+    "agents": "Agents",
+    "name": "Name",
+    "status": "Status",
+    "version": "Version",
+    "lastSeen": "Last seen",
+    "agent": {
+      "waiting-to-enrol": "Waiting to enrol",
+      "online": "Online",
+      "offline": "Offline"
+    },
+    "actions": "Actions",
+    "remove": "Remove agent {{name}}",
+    "noAgents": "No agents yet",
+    "noAgentsDetail": "Add one, then start it with its command where it can reach your applications.",
+    "agentName": "Agent name",
+    "agentNameHint": "Lowercase letters, digits, dots and dashes, such as dc1.",
+    "addAgent": "Add agent",
+    "queue": "Queue",
+    "queueDescription": "The latest 200 scans and verifications. A job an agent does not finish goes back to the queue, three times at most.",
+    "target": "Target",
+    "start": "Start {{name}}",
+    "startDescription": "Run this where the agent can reach your applications and dast. The token works once, for 7 days, and is not shown again.",
+    "done": "Done"
   }
 }

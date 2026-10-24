@@ -140,6 +140,45 @@ describe("responses match openapi.json", () => {
     await call("PATCH", "/api/v1/targets/{id}", { method: "PATCH" }, `/api/v1/targets/${target}`);
   });
 
+  it("agents, the queue and schedules", async () => {
+    await call("PATCH", "/api/v1/targets/{id}", admin({ schedule: "weekly", scheduleProfile: "standard" }), `/api/v1/targets/${target}`);
+    await call("PATCH", "/api/v1/targets/{id}", admin({ schedule: "hourly" }), `/api/v1/targets/${target}`);
+    await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "standard" }), `/api/v1/targets/${target}/scan`);
+    await call("POST", "/api/v1/targets/{id}/scan", admin({ profile: "max" }), `/api/v1/targets/${target}/scan`);
+    await call("POST", "/api/v1/targets/{id}/scan", admin({}), "/api/v1/targets/missing/scan");
+    await call("POST", "/api/v1/targets/{id}/scan", { method: "POST" }, `/api/v1/targets/${target}/scan`);
+    await call("GET", "/api/v1/jobs", admin());
+    await call("GET", "/api/v1/jobs", admin(), `/api/v1/jobs?target=${target}`);
+    await call("GET", "/api/v1/jobs", {});
+    const made = (await call("POST", "/api/v1/agents", admin({ name: "dc1" }))).body as { enrollToken: string; agent: { id: string } };
+    await call("POST", "/api/v1/agents", admin({ name: "dc1" }));
+    await call("POST", "/api/v1/agents", admin({ name: "Not A Name" }));
+    await call("POST", "/api/v1/agents", {});
+    await call("GET", "/api/v1/agents", admin());
+    await call("GET", "/api/v1/agents", {});
+    await call("POST", "/api/v1/agent/enroll", { method: "POST", body: JSON.stringify({ token: "ode_nope" }) });
+    const { secret } = (await call("POST", "/api/v1/agent/enroll", { method: "POST", body: JSON.stringify({ token: made.enrollToken, version }) })).body as {
+      secret: string;
+    };
+    const agent = (body: unknown, token = secret) => ({
+      method: "POST",
+      headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: typeof body === "string" ? body : JSON.stringify(body),
+    });
+    await call("POST", "/api/v1/agent/work", agent({}, "oda_nope"));
+    const job = ((await call("POST", "/api/v1/agent/work", agent({ version }))).body as { jobs: Array<{ id: string }> }).jobs[0]!;
+    const at = (what: string) => `/api/v1/agent/jobs/${job.id}/${what}`;
+    await call("POST", "/api/v1/agent/jobs/{id}/sarif", agent(report("b")), `${at("sarif")}?engine=zap`);
+    await call("POST", "/api/v1/agent/jobs/{id}/sarif", agent(report("b")), `${at("sarif")}?engine=burp`);
+    await call("POST", "/api/v1/agent/jobs/{id}/proof", agent({ content: "x" }), at("proof"));
+    await call("POST", "/api/v1/agent/jobs/{id}/done", agent({}), at("done"));
+    await call("POST", "/api/v1/agent/jobs/{id}/done", agent({}), at("done"));
+    await call("POST", "/api/v1/agent/jobs/{id}/failed", agent({ error: "late" }), at("failed"));
+    await call("POST", "/api/v1/agent/jobs/{id}/sarif", agent(report("b")), `${at("sarif")}?engine=zap`);
+    await call("DELETE", "/api/v1/agents/{id}", admin(), `/api/v1/agents/${made.agent.id}`);
+    await call("DELETE", "/api/v1/agents/{id}", admin(), "/api/v1/agents/missing");
+  });
+
   it("reports and every refusal", async () => {
     await call("POST", "/api/v1/scans", send(), path("target=shop-staging"));
     const second = (await call("POST", "/api/v1/scans", send(report("a", "b")), path("target=shop-staging&engine=zap"))).body as {

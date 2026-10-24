@@ -12,13 +12,13 @@ describe("openDb", () => {
     first.close();
 
     const second = openDb(path);
-    expect(second.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get()).toEqual({ n: 1 });
+    expect(second.prepare("SELECT COUNT(*) AS n FROM schema_migrations").get()).toEqual({ n: 2 });
     second.close();
   });
 
   it("deletes a target's scans and findings with it", () => {
     const db = openDb(":memory:");
-    db.exec(`INSERT INTO targets VALUES ('t', 'shop', 'https://shop.example.com', 0, 'high', 'tok', NULL, 'now');
+    db.exec(`INSERT INTO targets (id, name, url, production, fail_on, verify_token, verified_at, created_at) VALUES ('t', 'shop', 'https://shop.example.com', 0, 'high', 'tok', NULL, 'now');
       INSERT INTO scans VALUES ('s', 't', 'zap', 'ZAP', 1, 1, 0, 0, 0, 0, 'high', 'now');
       INSERT INTO findings (target_id, fingerprint, engine, rule_id, severity, url, message, first_seen, last_seen) VALUES ('t', 'f', 'zap', 'x', 'low', 'https://shop.example.com', 'm', 'now', 'now');
       DELETE FROM targets`);
