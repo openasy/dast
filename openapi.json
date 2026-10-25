@@ -743,6 +743,16 @@
             }
           },
           {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "description": "Only this rule's findings, by its id.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -940,6 +950,16 @@
             }
           },
           {
+            "name": "rule",
+            "in": "query",
+            "required": false,
+            "description": "Only this rule's findings, by its id.",
+            "schema": {
+              "type": "string",
+              "maxLength": 256
+            }
+          },
+          {
             "name": "limit",
             "in": "query",
             "required": false,
@@ -1014,6 +1034,49 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/Summary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem"
+          }
+        },
+        "x-openasy-role": "viewer"
+      }
+    },
+    "/api/v1/overview": {
+      "get": {
+        "operationId": "getOverview",
+        "tags": [
+          "Product"
+        ],
+        "summary": "Findings over time, what each target needs, and the kinds seen most",
+        "security": [
+          {
+            "session": []
+          },
+          {
+            "apiToken": []
+          },
+          {
+            "adminToken": []
+          }
+        ],
+        "description": "Needs the viewer role.",
+        "responses": {
+          "200": {
+            "description": "For the overview page.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Overview"
                 }
               }
             }
@@ -2976,6 +3039,135 @@
               "type": "string"
             },
             "description": "What to fix that did not stop the file from being applied."
+          }
+        }
+      },
+      "Overview": {
+        "type": "object",
+        "required": [
+          "open",
+          "days",
+          "targets",
+          "topKinds"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "open": {
+            "$ref": "#/components/schemas/Counts"
+          },
+          "days": {
+            "type": "array",
+            "description": "Open findings at the end of each of the last 30 days (UTC), oldest first; the last one is now.",
+            "items": {
+              "type": "object",
+              "required": [
+                "day",
+                "open"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "day": {
+                  "type": "string",
+                  "format": "date"
+                },
+                "open": {
+                  "$ref": "#/components/schemas/Counts"
+                }
+              }
+            }
+          },
+          "targets": {
+            "type": "array",
+            "description": "Every target, those that need someone first: unverified, then never scanned, then stale, then by open findings.",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "url",
+                "schedule",
+                "state",
+                "lastScanAt",
+                "open"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "schedule": {
+                  "$ref": "#/components/schemas/Schedule"
+                },
+                "state": {
+                  "type": "string",
+                  "enum": [
+                    "unverified",
+                    "never-scanned",
+                    "stale",
+                    "current"
+                  ],
+                  "description": "`unverified`: not proven to be the install's, so never scanned. `stale`: its last scan is older than its schedule allows, a day's grace past it, or 30 days without one."
+                },
+                "lastScanAt": {
+                  "oneOf": [
+                    {
+                      "type": "null"
+                    },
+                    {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  ]
+                },
+                "open": {
+                  "$ref": "#/components/schemas/Counts"
+                }
+              }
+            }
+          },
+          "topKinds": {
+            "type": "array",
+            "description": "The 10 kinds of open finding seen most, by rule and engine.",
+            "items": {
+              "type": "object",
+              "required": [
+                "rule",
+                "engine",
+                "name",
+                "open",
+                "targets",
+                "severity"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "rule": {
+                  "type": "string"
+                },
+                "engine": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string",
+                  "description": "The finding's message: ZAP's rule ids are numbers."
+                },
+                "open": {
+                  "type": "integer"
+                },
+                "targets": {
+                  "type": "integer",
+                  "description": "How many targets have it."
+                },
+                "severity": {
+                  "$ref": "#/components/schemas/Severity"
+                }
+              }
+            }
           }
         }
       }

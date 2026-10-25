@@ -155,7 +155,8 @@
     "signIn": "Anmeldung",
     "apiTokens": "API-Tokens",
     "account": "Konto",
-    "agents": "Agents"
+    "agents": "Agents",
+    "overview": "Übersicht"
   },
   "failOn": {
     "critical": "Kritisch",
@@ -251,5 +252,29 @@
   "search": {
     "target": "Ziel",
     "finding": "Befund"
+  },
+  "overviewPage": {
+    "overview": "Übersicht",
+    "needAttention": "Zu prüfende Ziele",
+    "openOverTime": "Offene Befunde im Zeitverlauf",
+    "openOverTimeDetail": "Am Ende jedes der letzten 30 Tage, nach Schweregrad. Bewertete Befunde sind nicht enthalten.",
+    "targets": "Ziele",
+    "targetsDetail": "Zuerst die, die jemanden brauchen: nicht verifiziert, nie gescannt, dann mit einem letzten Scan, der älter ist als ihr Zeitplan.",
+    "target": "Ziel",
+    "state": "Zustand",
+    "schedule": "Zeitplan",
+    "lastScan": "Letzter Scan",
+    "open": "Offen",
+    "neverScanned": "Nie gescannt",
+    "stale": "Scan überfällig",
+    "current": "Aktuell",
+    "schedule_none": "Von Hand",
+    "schedule_daily": "Täglich",
+    "schedule_weekly": "Wöchentlich",
+    "topKinds": "Häufigste Befunde",
+    "topKindsDetail": "Offene Befunde jeder Art, über alle Ziele.",
+    "bySeverity": "Nach Schweregrad",
+    "bySeverityDetail": "Jetzt offene Befunde.",
+    "openCaption": "offen"
   }
 }

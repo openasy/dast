@@ -42,6 +42,9 @@ const MAX_ACCEPT_DAYS = 366;
 const SCAN_FINDINGS_IN_ANSWER = 100;
 
 const now = () => new Date().toISOString();
+const DAY = 86_400_000;
+/** How long a target's last scan stays current: a day's grace past its schedule, and a month without one. */
+const FRESH_DAYS = { daily: 2, weekly: 8, none: 30 } as const;
 const bad = (detail: string) => new DastError(422, "invalid-body", detail);
 const notFound = (what: string) => new DastError(404, "not-found", `${what} does not exist.`);
 
@@ -86,6 +89,8 @@ export interface FindingFilter {
   status: Status;
   severity?: Severity[];
   q?: string;
+  /** One rule of one engine, by its id. */
+  rule?: string;
   targetId?: string;
 }
 
@@ -201,6 +206,7 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       where.push(filter.status === "suppressed" ? SUPPRESSED.replace("?", at) : `NOT ${SUPPRESSED.replace("?", at)}`);
     }
     if (filter.targetId) (where.push("f.target_id = ?"), args.push(filter.targetId));
+    if (filter.rule) (where.push("f.rule_id = ?"), args.push(filter.rule));
     if (filter.severity?.length) (where.push(`f.severity IN (${filter.severity.map(() => "?").join(",")})`), args.push(...filter.severity));
     if (filter.q) {
       const like = `%${filter.q.replace(/[\\%_]/g, "\\$&")}%`;
@@ -355,6 +361,63 @@ export function createDast(db: DatabaseSync, { retentionDays = 365, verifier = f
       const failing = (db.prepare("SELECT COUNT(*) AS n FROM scans WHERE blocking > 0 AND created_at > ?").get(week) as { n: number }).n;
       const lastScanAt = (db.prepare("SELECT MAX(created_at) AS t FROM scans").get() as { t: string | null }).t;
       return { targets, verified, open: openCounts(), suppressed, failingChecks: failing, lastScanAt };
+    },
+
+    /**
+     * The overview page: open findings at the end of each of the last 30 days (UTC), by severity, the last value being
+     * now; each target's state, those that need someone first; and the kinds of finding seen most. A finding's past
+     * triage is read from when it was triaged.
+     */
+    overview() {
+      const at = now();
+      const today = Math.floor(Date.parse(at) / DAY) * DAY;
+      const openAt = db.prepare(
+        `SELECT severity, COUNT(*) AS n FROM findings
+         WHERE first_seen <= ? AND (resolved_at IS NULL OR resolved_at > ?)
+           AND NOT (triage <> 'open' AND triaged_at <= ? AND (expires_at IS NULL OR expires_at > ?))
+         GROUP BY severity`,
+      );
+      const days = Array.from({ length: 30 }, (_, i) => {
+        const start = today - (29 - i) * DAY;
+        const end = i === 29 ? at : new Date(start + DAY).toISOString();
+        const open = zero();
+        for (const r of openAt.all(end, end, end, end) as Array<{ severity: Severity; n: number }>) open[r.severity] = r.n;
+        return { day: new Date(start).toISOString().slice(0, 10), open };
+      });
+      // What needs someone first: not proven to be the install's, never scanned, then a last scan older than its schedule.
+      const ORDER = { unverified: 0, "never-scanned": 1, stale: 2, current: 3 } as const;
+      const targets = (db.prepare("SELECT * FROM targets").all() as Array<Record<string, any>>)
+        .map((t) => {
+          const lastScanAt = (db.prepare("SELECT MAX(created_at) AS t FROM scans WHERE target_id = ?").get(t.id) as { t: string | null }).t;
+          const schedule = t.schedule as keyof typeof FRESH_DAYS;
+          const state: keyof typeof ORDER =
+            t.verified_at === null
+              ? "unverified"
+              : !lastScanAt
+                ? "never-scanned"
+                : Date.parse(at) - Date.parse(lastScanAt) > FRESH_DAYS[schedule] * DAY
+                  ? "stale"
+                  : "current";
+          const open = openCounts(t.id);
+          return { id: t.id as string, name: t.name as string, url: t.url as string, schedule, state, lastScanAt, open };
+        })
+        .sort(
+          (a, b) =>
+            ORDER[a.state] - ORDER[b.state] ||
+            Object.values(b.open).reduce((x, y) => x + y, 0) - Object.values(a.open).reduce((x, y) => x + y, 0) ||
+            a.name.localeCompare(b.name),
+        );
+      // ZAP's rule ids are numbers: a kind of finding is named by its message.
+      const topKinds = (
+        db
+          .prepare(
+            `SELECT rule_id, engine, MIN(message) AS message, COUNT(*) AS n, COUNT(DISTINCT target_id) AS targets, MAX(${RANK_SQL}) AS rank
+             FROM findings WHERE resolved_at IS NULL AND NOT ${SUPPRESSED}
+             GROUP BY rule_id, engine ORDER BY n DESC, rule_id LIMIT 10`,
+          )
+          .all(at) as Array<{ rule_id: string; engine: string; message: string; n: number; targets: number; rank: number }>
+      ).map((r) => ({ rule: r.rule_id, engine: r.engine, name: r.message, open: r.n, targets: r.targets, severity: SEVERITIES[4 - r.rank]! }));
+      return { open: openCounts(), days, targets, topKinds };
     },
 
     severityTotals: () => openCounts(),

@@ -29,6 +29,23 @@ export interface EndpointsFile {
   warnings: string[];
 }
 
+/** The overview page: open findings over time, what each target needs, and the kinds of finding seen most. */
+export interface Overview {
+  open: Counts;
+  days: Array<{ day: string; open: Counts }>;
+  targets: Array<{
+    id: string;
+    name: string;
+    url: string;
+    schedule: "none" | "daily" | "weekly";
+    /** unverified: not proven to be the install's; stale: its last scan is older than its schedule allows. */
+    state: "unverified" | "never-scanned" | "stale" | "current";
+    lastScanAt: string | null;
+    open: Counts;
+  }>;
+  topKinds: Array<{ rule: string; engine: string; name: string; open: number; targets: number; severity: Severity }>;
+}
+
 export interface Target {
   id: string;
   name: string;

@@ -1,6 +1,7 @@
 import {
   AppShell,
   Badge,
+  BarList,
   Callout,
   BrandProvider,
   Button,
@@ -9,6 +10,7 @@ import {
   EmptyState,
   FacetFilter,
   FilterBar,
+  FilterChip,
   IconButton,
   KpiCard,
   KpiGrid,
@@ -18,22 +20,47 @@ import {
   PRODUCT_IDS,
   SearchInput,
   SelectField,
+  SEVERITY_META,
   SeverityBadge,
+  StackedBarChart,
   StatusBadge,
   Tabs,
   TextField,
   TimeSeriesChart,
+  TONE_COLORS,
   usePath,
-  type Column,
-  type ProductId,
   useThemePreference,
   useAgo,
   toLocale,
   useLocalePreference,
+  DonutChart,
+  OverviewGrid,
+  type Column,
+  type ProductId,
 } from "@openasy/ui";
 import { AccountSettings, AuthGate, MembersSettings, SignInSettings, TokensSettings, useAccountMenu, useAuth, useInstallBrand } from "@openasy/auth/react";
 import colophon from "virtual:openasy-colophon";
-import { Bot, Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Play, Plus, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
+import {
+  Bot,
+  Bug,
+  CircleAlert,
+  CircleSlash,
+  Crosshair,
+  Info,
+  KeyRound,
+  LayoutDashboard,
+  LogIn,
+  LogOut,
+  Play,
+  Plus,
+  ShieldAlert,
+  ShieldCheck,
+  Trash2,
+  TriangleAlert,
+  UserRound,
+  Users,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   api,
@@ -45,6 +72,7 @@ import {
   type Job,
   type Profile,
   type Finding,
+  type Overview,
   type ProductLink,
   type Scan,
   type Severity,
@@ -54,15 +82,15 @@ import {
 import { useT, type T } from "./i18n.ts";
 import { search } from "./search.ts";
 
-const PAGES = ["targets", "agents", "setup", "account", "members", "signin", "tokens", "about"] as const;
-type Route = { page: "findings" | (typeof PAGES)[number] } | { page: "target"; id: string };
+const PAGES = ["findings", "targets", "agents", "setup", "account", "members", "signin", "tokens", "about"] as const;
+type Route = { page: "overview" | (typeof PAGES)[number] } | { page: "target"; id: string };
 /** The first path segments that are pages of this UI, for followLinks. */
-export const PATHS = ["findings", ...PAGES];
+export const PATHS = ["overview", ...PAGES];
 function parseRoute(path: string): Route {
   const [page, id] = path.replace(/^\//, "").split("/");
   if (page === "targets" && id) return { page: "target", id: decodeURIComponent(id) };
   if ((PAGES as readonly string[]).includes(page ?? "")) return { page: page as (typeof PAGES)[number] };
-  return { page: "findings" };
+  return { page: "overview" };
 }
 
 /** Data loading with the session; when it ends, the sign-in screen comes back. */
@@ -262,6 +290,8 @@ function FindingsTable({
   const [tab, setTab] = useState<Tab>("open");
   const [sev, setSev] = useState<string[]>([]);
   const [q, setQ] = useState("");
+  // One rule, as the overview links to it: /findings?rule=...
+  const [rule, setRule] = useState(() => (targetId ? undefined : (new URLSearchParams(location.search).get("rule") ?? undefined)));
   const [rows, setRows] = useState<Finding[]>();
   const [more, setMore] = useState<string>();
   const [open, setOpen] = useState<Finding | null>(null);
@@ -272,10 +302,11 @@ function FindingsTable({
       const p = new URLSearchParams({ status: tab, limit: "200" });
       if (sev.length) p.set("severity", sev.join(","));
       if (q.trim()) p.set("q", q.trim());
+      if (rule) p.set("rule", rule);
       if (cursor) p.set("cursor", cursor);
       return call<{ findings: Finding[]; nextCursor?: string }>(`${base}?${p}`);
     },
-    [call, base, tab, sev, q],
+    [call, base, tab, sev, q, rule],
   );
   const load = useCallback(() => {
     query().then(
@@ -285,6 +316,10 @@ function FindingsTable({
   }, [query]);
   useEffect(load, [load]);
   const loadMore = () => more && query(more).then((r) => (setRows((x) => [...(x ?? []), ...r.findings]), setMore(r.nextCursor)));
+  const clearRule = () => {
+    setRule(undefined);
+    if (location.search) navigate(location.pathname, { replace: true });
+  };
 
   const columns: Column<Finding>[] = [
     { id: "sev", header: t("findingsTable.severity"), width: "104px", cell: (f) => <SeverityBadge severity={f.severity} /> },
@@ -340,7 +375,8 @@ function FindingsTable({
           { value: "resolved", label: t("findingsTable.fixed") },
         ]}
       />
-      <FilterBar onClear={() => (setSev([]), setQ(""))}>
+      <FilterBar onClear={() => (setSev([]), setQ(""), clearRule())}>
+        {rule && <FilterChip field={t("findingsTable.rule")} value={rule} onRemove={clearRule} />}
         <FacetFilter
           label={t("findingsTable.severity")}
           selected={sev}
@@ -435,6 +471,128 @@ function FindingsPage({ call, summary, reload }: { call: Call; summary?: Summary
         </KpiGrid>
       )}
       <FindingsTable call={call} summary={s} reload={reload} />
+    </>
+  );
+}
+
+/** Where the findings are going, what each target needs, and the kinds of finding seen most. */
+const SEVERITY_ICON = { critical: ShieldAlert, high: TriangleAlert, medium: CircleAlert, low: Info } as const;
+
+function OverviewPage({ call, summary }: { call: Call; summary?: Summary }) {
+  const ago = useAgo();
+  const t = useT();
+  const [o, setO] = useState<Overview>();
+  useEffect(() => void call<Overview>("/api/v1/overview").then(setO, () => {}), [call, summary]);
+  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  const color = (s: Severity) => TONE_COLORS[SEVERITY_META[s].tone];
+  const attention = o ? o.targets.filter((x) => x.state !== "current").length : 0;
+  const STATE = {
+    unverified: <StatusBadge tone="warning">{t("verifiedBadge.notVerified")}</StatusBadge>,
+    "never-scanned": <StatusBadge tone="warning">{t("overviewPage.neverScanned")}</StatusBadge>,
+    stale: <StatusBadge tone="warning">{t("overviewPage.stale")}</StatusBadge>,
+    current: <StatusBadge tone="success">{t("overviewPage.current")}</StatusBadge>,
+  };
+  const columns: Column<Overview["targets"][number]>[] = [
+    {
+      id: "name",
+      header: t("overviewPage.target"),
+      width: "32%",
+      cell: (x) => (
+        <a href={`/targets/${x.id}`} className="font-medium" title={x.url}>
+          {x.name}
+        </a>
+      ),
+    },
+    { id: "state", header: t("overviewPage.state"), cell: (x) => STATE[x.state] },
+    { id: "schedule", header: t("overviewPage.schedule"), cell: (x) => <span className="text-xs">{t(`overviewPage.schedule_${x.schedule}`)}</span> },
+    {
+      id: "last",
+      header: t("overviewPage.lastScan"),
+      cell: (x) => <span className="text-xs whitespace-nowrap">{x.lastScanAt ? ago(x.lastScanAt) : "–"}</span>,
+    },
+    { id: "open", header: t("overviewPage.open"), cell: (x) => <SevCounts counts={x.open} /> },
+  ];
+  return (
+    <>
+      <PageHeader
+        title={t("overviewPage.overview")}
+        description={
+          summary
+            ? t("findingsPage.verifiedLastReport", {
+                plural: t("plurals.target", { count: summary.targets }),
+                verified: summary.verified,
+                ago: ago(summary.lastScanAt),
+              })
+            : undefined
+        }
+      />
+      {o && (
+        <KpiGrid minWidth={150}>
+          {(["critical", "high", "medium", "low"] as const).map((s) => (
+            <KpiCard
+              key={s}
+              label={t(`findingsPage.${s}`)}
+              value={o.open[s]}
+              icon={SEVERITY_ICON[s]}
+              tone={o.open[s] && (s === "critical" || s === "high") ? SEVERITY_META[s].tone : undefined}
+              trend={o.days.map((d) => d.open[s])}
+              trendColor={color(s)}
+              href="/findings"
+            />
+          ))}
+          <KpiCard label={t("overviewPage.needAttention")} value={attention} icon={Crosshair} tone={attention ? "warning" : "success"} href="/targets" />
+        </KpiGrid>
+      )}
+      {o && (
+        <OverviewGrid>
+          <Panel title={t("overviewPage.openOverTime")} description={t("overviewPage.openOverTimeDetail")}>
+            <StackedBarChart
+              label={t("overviewPage.openOverTime")}
+              categories={o.days.map((d) => day(d.day))}
+              segments={(["low", "medium", "high", "critical"] as const).map((s) => ({ id: s, name: SEVERITY_META[s].label, color: color(s) }))}
+              values={o.days.map((d) => [d.open.low, d.open.medium, d.open.high, d.open.critical])}
+              height={190}
+              xTicks={6}
+            />
+          </Panel>
+          <Panel title={t("overviewPage.bySeverity")} description={t("overviewPage.bySeverityDetail")}>
+            <DonutChart
+              label={t("overviewPage.bySeverity")}
+              caption={t("overviewPage.openCaption")}
+              slices={(["critical", "high", "medium", "low"] as const).map((s) => ({
+                id: s,
+                name: SEVERITY_META[s].label,
+                value: o.open[s],
+                color: color(s),
+                href: "/findings",
+              }))}
+            />
+          </Panel>
+        </OverviewGrid>
+      )}
+      {o && (
+        <div className="grid gap-3 xl:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
+          <Panel title={t("overviewPage.targets")} description={t("overviewPage.targetsDetail")} flush>
+            <DataTable label={t("overviewPage.targets")} columns={columns} rows={o.targets} getRowId={(x) => x.id} minWidth={560} />
+          </Panel>
+          <Panel title={t("overviewPage.topKinds")} description={t("overviewPage.topKindsDetail")}>
+            {o.topKinds.length ? (
+              <BarList
+                label={t("overviewPage.topKinds")}
+                items={o.topKinds.map((k) => ({
+                  id: `${k.engine}/${k.rule}`,
+                  label: <span title={`${k.engine} ${k.rule}`}>{k.name}</span>,
+                  value: k.open,
+                  href: `/findings?rule=${encodeURIComponent(k.rule)}`,
+                  color: color(k.severity),
+                }))}
+              />
+            ) : (
+              <EmptyState title={t("findingsTable.noOpenFindings")} />
+            )}
+          </Panel>
+        </div>
+      )}
     </>
   );
 }
@@ -1172,6 +1330,7 @@ function Product() {
   }, [reload]);
 
   const nav = [
+    { id: "overview", label: msg("product.overview"), icon: LayoutDashboard },
     { id: "findings", label: msg("product.findings"), icon: Bug },
     { id: "targets", label: msg("product.targets"), icon: Crosshair, count: summary?.targets },
     ...(can("admin") ? [{ id: "agents", label: msg("product.agents"), icon: Bot }] : []),
@@ -1209,8 +1368,10 @@ function Product() {
       onThemeChange={setTheme}
       onLanguageChange={(code) => setLocale(toLocale(code))}
     >
-      {route.page === "findings" && summary && summary.targets === 0 ? (
+      {(route.page === "overview" || route.page === "findings") && summary && summary.targets === 0 ? (
         <WelcomePage />
+      ) : route.page === "overview" ? (
+        <OverviewPage call={call} summary={summary} />
       ) : route.page === "findings" ? (
         <FindingsPage call={call} summary={summary} reload={reload} />
       ) : route.page === "targets" ? (

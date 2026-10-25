@@ -234,9 +234,27 @@ describe("triage and policy", () => {
     expect((await json(await app.admin(`/api/v1/findings?limit=2&cursor=${all.nextCursor}`))).findings.length).toBeGreaterThan(0);
     expect((await json(await app.admin("/api/v1/findings?severity=low"))).findings.map((f: { rule: string }) => f.rule)).toEqual(["10038"]);
     expect((await json(await app.admin("/api/v1/findings?q=git"))).findings.map((f: { rule: string }) => f.rule)).toEqual(["git-config"]);
+    expect((await json(await app.admin("/api/v1/findings?rule=git-config"))).findings.map((f: { rule: string }) => f.rule)).toEqual(["git-config"]);
     expect((await app.admin("/api/v1/findings?severity=urgent")).status).toBe(422);
     expect((await app.admin("/api/v1/findings?status=gone")).status).toBe(422);
     expect((await app.admin("/api/v1/findings?limit=0")).status).toBe(422);
+  });
+
+  it("shows open findings over time, what each target needs, and the kinds of finding seen most", async () => {
+    const o = await json(await app.admin("/api/v1/overview"));
+    expect(o.days).toHaveLength(30);
+    expect(o.days.at(-1).open).toEqual(o.open);
+    expect(o.targets[0]).toMatchObject({ name: "shop-staging", state: "current", schedule: "none" });
+    // ZAP's rule ids are numbers: a kind is named by its message, most frequent first.
+    expect(o.topKinds[0]).toMatchObject({ engine: expect.any(String), name: expect.any(String), targets: 1 });
+    expect(o.topKinds.map((k: { rule: string }) => k.rule)).toContain("git-config");
+    // A target no one has proven to be the install's comes first, before one never scanned.
+    await app.setTarget("other", "https://other.example.com");
+    expect((await json(await app.admin("/api/v1/overview"))).targets.map((t: { name: string; state: string }) => `${t.name} ${t.state}`)).toEqual([
+      "other unverified",
+      "shop-staging current",
+    ]);
+    app.dropTarget("other");
   });
 
   it("removes a target with its reports and findings once the file does", async () => {

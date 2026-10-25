@@ -155,7 +155,8 @@
     "signIn": "Oturum açma",
     "apiTokens": "API token'ları",
     "account": "Hesap",
-    "agents": "Ajanlar"
+    "agents": "Ajanlar",
+    "overview": "Genel bakış"
   },
   "failOn": {
     "critical": "Kritik",
@@ -251,5 +252,29 @@
   "search": {
     "target": "Hedef",
     "finding": "Bulgu"
+  },
+  "overviewPage": {
+    "overview": "Genel bakış",
+    "needAttention": "Bakılması gereken hedefler",
+    "openOverTime": "Zaman içinde açık bulgular",
+    "openOverTimeDetail": "Son 30 günün her birinin sonunda, önem derecesine göre. Değerlendirilmiş bulgular dahil değil.",
+    "targets": "Hedefler",
+    "targetsDetail": "Önce birinin ilgilenmesi gerekenler: doğrulanmamış, hiç taranmamış, sonra son taraması zamanlamasından eski olanlar.",
+    "target": "Hedef",
+    "state": "Durum",
+    "schedule": "Zamanlama",
+    "lastScan": "Son tarama",
+    "open": "Açık",
+    "neverScanned": "Hiç taranmadı",
+    "stale": "Taraması gecikti",
+    "current": "Güncel",
+    "schedule_none": "Elle",
+    "schedule_daily": "Günlük",
+    "schedule_weekly": "Haftalık",
+    "topKinds": "En sık görülen bulgular",
+    "topKindsDetail": "Her türden açık bulgular, tüm hedeflerde.",
+    "bySeverity": "Öneme göre",
+    "bySeverityDetail": "Şu an açık bulgular.",
+    "openCaption": "açık"
   }
 }

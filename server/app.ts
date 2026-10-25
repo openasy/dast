@@ -196,7 +196,15 @@ function findingFilter(url: URL, targetId?: string): FindingFilter {
     throw new DastError(422, "invalid-body", `severity is a comma-separated list of ${SEVERITIES.join(", ")}.`);
   const q = url.searchParams.get("q")?.trim();
   if (q && q.length > 128) throw new DastError(422, "invalid-body", "q must be at most 128 characters.");
-  return { status: status as Status, severity, q: q || undefined, targetId: targetId ?? url.searchParams.get("target") ?? undefined };
+  const rule = url.searchParams.get("rule")?.trim();
+  if (rule && rule.length > 256) throw new DastError(422, "invalid-body", "rule must be at most 256 characters.");
+  return {
+    status: status as Status,
+    severity,
+    q: q || undefined,
+    rule: rule || undefined,
+    targetId: targetId ?? url.searchParams.get("target") ?? undefined,
+  };
 }
 
 export function createApp({
@@ -228,6 +236,7 @@ export function createApp({
     { method: "GET", path: "/api/v1/version", auth: "none", handle: () => ({ product: "dast", version }) },
     { method: "GET", path: "/api/v1/products", auth: "viewer", handle: () => ({ products }) },
     { method: "GET", path: "/api/v1/summary", auth: "viewer", handle: () => ({ ...dast.summary(), endpointsFile: endpointsFile?.() ?? null }) },
+    { method: "GET", path: "/api/v1/overview", auth: "viewer", handle: () => dast.overview() },
 
     // Reports in, from CI or from whoever runs the scanner. The answer says whether the check passes.
     {

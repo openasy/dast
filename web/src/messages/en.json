@@ -155,7 +155,8 @@
     "signIn": "Sign-in",
     "apiTokens": "API tokens",
     "account": "Account",
-    "agents": "Agents"
+    "agents": "Agents",
+    "overview": "Overview"
   },
   "failOn": {
     "critical": "Critical",
@@ -251,5 +252,29 @@
   "search": {
     "target": "Target",
     "finding": "Finding"
+  },
+  "overviewPage": {
+    "overview": "Overview",
+    "needAttention": "Targets to look at",
+    "openOverTime": "Open findings over time",
+    "openOverTimeDetail": "At the end of each of the last 30 days, by severity. Triaged findings are left out.",
+    "targets": "Targets",
+    "targetsDetail": "Those that need someone first: not verified, never scanned, then with a last scan older than their schedule.",
+    "target": "Target",
+    "state": "State",
+    "schedule": "Schedule",
+    "lastScan": "Last scan",
+    "open": "Open",
+    "neverScanned": "Never scanned",
+    "stale": "Scan overdue",
+    "current": "Current",
+    "schedule_none": "By hand",
+    "schedule_daily": "Daily",
+    "schedule_weekly": "Weekly",
+    "topKinds": "Findings seen most",
+    "topKindsDetail": "Open findings of each kind, over every target.",
+    "bySeverity": "By severity",
+    "bySeverityDetail": "Open findings now.",
+    "openCaption": "open"
   }
 }
