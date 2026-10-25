@@ -22,16 +22,19 @@ import {
   StatusBadge,
   Tabs,
   TextField,
+  TimeSeriesChart,
   usePath,
   type Column,
   type ProductId,
   useThemePreference,
   useAgo,
+  toLocale,
+  useLocalePreference,
 } from "@openasy/ui";
-import { AccountSettings, AuthGate, MembersSettings, SignInSettings, TokensSettings, useAuth, useInstallBrand } from "@openasy/auth/react";
+import { AccountSettings, AuthGate, MembersSettings, SignInSettings, TokensSettings, useAccountMenu, useAuth, useInstallBrand } from "@openasy/auth/react";
 import colophon from "virtual:openasy-colophon";
-import { Bot, Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Play, Plus, Settings2, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
-import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { Bot, Bug, CircleSlash, Crosshair, KeyRound, LogIn, LogOut, Play, Plus, ShieldCheck, Trash2, UserRound, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   api,
   MfaSetupRequired,
@@ -49,6 +52,7 @@ import {
   type Target,
 } from "./api.ts";
 import { useT, type T } from "./i18n.ts";
+import { search } from "./search.ts";
 
 const PAGES = ["targets", "agents", "setup", "account", "members", "signin", "tokens", "about"] as const;
 type Route = { page: "findings" | (typeof PAGES)[number] } | { page: "target"; id: string };
@@ -553,6 +557,22 @@ function TargetsPage({ call, summary }: { call: Call; summary?: Summary; reload:
   );
 }
 
+/** Each engine's count at each report, oldest first: an engine keeps the count of its last report until it reports again. */
+function byEngine<R extends { engine: string; createdAt: string }>(reports: R[], count: (r: R) => number) {
+  const ordered = [...reports].reverse();
+  const engines = [...new Set(ordered.map((r) => r.engine))];
+  const last = new Map<string, number>();
+  const data = engines.map((): number[] => []);
+  for (const r of ordered) {
+    last.set(r.engine, count(r));
+    engines.forEach((e, i) => data[i]!.push(last.get(e) ?? 0));
+  }
+  return {
+    labels: ordered.map((r) => new Date(r.createdAt).toLocaleDateString()),
+    series: engines.map((e, i) => ({ id: e, name: e, data: data[i]! })),
+  };
+}
+
 function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () => void }) {
   const ago = useAgo();
   const msg = useT();
@@ -604,6 +624,7 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
       </EmptyState>
     );
 
+  const trend = byEngine(scans ?? [], (r) => r.total);
   const columns: Column<Scan>[] = [
     {
       id: "when",
@@ -633,7 +654,7 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
             {can("admin") && (
               <div className="flex items-center gap-2">
                 <Button variant="primary" icon={<ShieldCheck />} onClick={() => void verify()} disabled={checking}>
-                  {checking ? "Checking…" : msg("targetPage.verify")}
+                  {checking ? msg("targetPage.checking") : msg("targetPage.verify")}
                 </Button>
                 {error && <span className="text-xs text-danger">{error}</span>}
               </div>
@@ -693,6 +714,16 @@ function TargetPage({ call, id, reload }: { call: Call; id: string; reload: () =
       {target && <AgentScans key={`${target.verified}`} call={call} target={target} onChanged={load} />}
       {target && can("admin") && <TargetLogins call={call} target={target} />}
       <FindingsTable call={call} targetId={id} summary={target ?? undefined} reload={() => (load(), reload())} />
+      {trend.labels.length > 1 && (
+        <Panel title={msg("targetPage.findingsOverTime")} description={msg("targetPage.whatEachEngineReported")}>
+          <TimeSeriesChart
+            label={msg("targetPage.findingsEachEngineReportedFor", { name: target?.name ?? msg("targetPage.target") })}
+            {...trend}
+            area={false}
+            height={160}
+          />
+        </Panel>
+      )}
       <Panel title={msg("targetPage.reports")} flush>
         <DataTable
           label={msg("targetPage.reports")}
@@ -1116,11 +1147,14 @@ function SettingsPage({ page }: { page: "account" | "members" | "signin" | "toke
 function Product() {
   const msg = useT();
   const [theme, setTheme] = useThemePreference();
+  const [, setLocale] = useLocalePreference();
   const { me, can } = useAuth();
+  const account = useAccountMenu();
   const route = parseRoute(usePath());
   const [summary, setSummary] = useState<Summary>();
   const [products, setProducts] = useState<Array<ProductLink & { id: ProductId }>>([]);
   const call = useApi();
+  const onSearch = useMemo(() => search(call, msg), [call, msg]);
 
   // The install's other products (OPENASY_PRODUCTS), for the switcher; ids this UI does not know are left out.
   useEffect(() => {
@@ -1143,7 +1177,6 @@ function Product() {
     ...(can("admin") ? [{ id: "agents", label: msg("product.agents"), icon: Bot }] : []),
   ];
   const footerNav = [
-    { id: "setup", label: msg("product.setup"), icon: Settings2 },
     ...(can("admin")
       ? [
           { id: "members", label: msg("product.members"), icon: Users },
@@ -1159,6 +1192,7 @@ function Product() {
   return (
     <AppShell
       product="dast"
+      onSearch={onSearch}
       about={colophon}
       nav={nav}
       activeNav={active}
@@ -1168,10 +1202,12 @@ function Product() {
         const to = products.find((p) => p.id === id);
         if (to) window.location.assign(to.url);
       }}
-      footerNav={footerNav}
-      user={{ name: me.user.name, role: roleName }}
+      footerNav={account.settings(footerNav)}
+      setup
+      user={{ name: me.user.name, role: roleName, ...account.user }}
       theme={theme}
       onThemeChange={setTheme}
+      onLanguageChange={(code) => setLocale(toLocale(code))}
     >
       {route.page === "findings" && summary && summary.targets === 0 ? (
         <WelcomePage />
@@ -1199,9 +1235,10 @@ function Product() {
 export function App() {
   const installBrand = useInstallBrand();
   const [theme] = useThemePreference();
+  const [locale] = useLocalePreference();
   return (
     // The install's brand from config/brand.env (ADR 0053); OpenAsy's own look where it sets none.
-    <BrandProvider theme={theme} brand={{ name: "OpenAsy", organization: undefined, ...installBrand }} className="min-h-screen">
+    <BrandProvider theme={theme} locale={locale} brand={{ name: "OpenAsy", organization: undefined, ...installBrand }} className="min-h-screen">
       <AuthGate product="OpenAsy DAST">
         <Product />
       </AuthGate>

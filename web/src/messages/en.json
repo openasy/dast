@@ -114,11 +114,15 @@
     "itsReportsFindingsAndDecisions": "Its reports, findings and decisions are deleted. To test it again, list it in the endpoints file and verify it.",
     "cancel": "Cancel",
     "delete2": "Delete",
+    "findingsOverTime": "Findings over time",
+    "whatEachEngineReported": "What each engine reported, of the last 50 reports. An engine keeps its count until its next report.",
+    "findingsEachEngineReportedFor": "Findings each engine reported for {{name}}",
     "reports": "Reports",
     "noReports": "No reports",
     "nothingHasBeenSentFor": "Nothing has been sent for this target.",
     "fromTheEndpointsFile": "From the endpoints file: change what fails a check, production, the schedule and the login there.",
-    "addedHereBefore": "Added here before the file. It keeps being scanned; copy this into the endpoints file to keep it there:"
+    "addedHereBefore": "Added here before the file. It keeps being scanned; copy this into the endpoints file to keep it there:",
+    "checking": "Checking…"
   },
   "setupPage": {
     "setup": "Setup",
@@ -243,5 +247,9 @@
     "none": "No logins",
     "noneDetail": "Scans see only what a signed-out visitor sees.",
     "fromTheFile": "How a scan gets past the target's sign-in page, from the login in the endpoints file. The secret is in the environment variable it names, never in the file, and never comes back here."
+  },
+  "search": {
+    "target": "Target",
+    "finding": "Finding"
   }
 }
