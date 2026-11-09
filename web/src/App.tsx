@@ -79,7 +79,7 @@ import {
   type Summary,
   type Target,
 } from "./api.ts";
-import { useT, type T } from "./i18n.ts";
+import { useT, type T, viewerLocale, setViewerLocale } from "./i18n.ts";
 import { search } from "./search.ts";
 
 const PAGES = ["findings", "targets", "agents", "setup", "account", "members", "signin", "tokens", "about"] as const;
@@ -203,7 +203,7 @@ function FindingPanel({ finding, call, onClose, onChanged }: { finding: Finding;
             <span className="text-fg-muted">
               {t.by ? `${t.by}, ` : ""}
               {ago(t.at)}
-              {t.expiresAt ? msg("findingPanel.until", { value: new Date(t.expiresAt).toLocaleDateString() }) : ""}
+              {t.expiresAt ? msg("findingPanel.until", { value: new Date(t.expiresAt).toLocaleDateString(viewerLocale()) }) : ""}
             </span>
           </div>
         )}
@@ -329,7 +329,7 @@ function FindingsTable({
       width: "30%",
       cell: (f) => (
         <span className="flex min-w-0 flex-col">
-          <button type="button" onClick={() => setOpen(f)} className="dast-wrap self-start text-left font-mono text-xs font-medium text-fg hover:underline">
+          <button type="button" onClick={() => setOpen(f)} className="dast-wrap self-start text-start font-mono text-xs font-medium text-fg hover:underline">
             {f.rule}
           </button>
           <span className="dast-clamp text-xs text-fg-muted" title={f.message}>
@@ -483,7 +483,7 @@ function OverviewPage({ call, summary }: { call: Call; summary?: Summary }) {
   const t = useT();
   const [o, setO] = useState<Overview>();
   useEffect(() => void call<Overview>("/api/v1/overview").then(setO, () => {}), [call, summary]);
-  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString(viewerLocale(), { month: "short", day: "numeric", timeZone: "UTC" });
   const color = (s: Severity) => TONE_COLORS[SEVERITY_META[s].tone];
   const attention = o ? o.targets.filter((x) => x.state !== "current").length : 0;
   const STATE = {
@@ -704,7 +704,7 @@ function TargetsPage({ call, summary }: { call: Call; summary?: Summary; reload:
           empty={
             <EmptyState title={msg("targetsPage.noTargetsYet")}>
               {msg("targetsPage.theyComeFromTheEndpointsFile")}
-              <div className="mt-3 text-left">
+              <div className="mt-3 text-start">
                 <Code>{EXAMPLE}</Code>
               </div>
             </EmptyState>
@@ -726,7 +726,7 @@ function byEngine<R extends { engine: string; createdAt: string }>(reports: R[],
     engines.forEach((e, i) => data[i]!.push(last.get(e) ?? 0));
   }
   return {
-    labels: ordered.map((r) => new Date(r.createdAt).toLocaleDateString()),
+    labels: ordered.map((r) => new Date(r.createdAt).toLocaleDateString(viewerLocale())),
     series: engines.map((e, i) => ({ id: e, name: e, data: data[i]! })),
   };
 }
@@ -1001,7 +1001,7 @@ function AgentScans({ call, target }: { call: Call; target: Target; onChanged: (
           {target.schedule === "none"
             ? msg("agentScans.noSchedule")
             : msg("agentScans.scheduled", { every: msg(`agentScans.every.${target.schedule}`), scan: msg(`agentScans.profile.${target.scheduleProfile}`) })}
-          {target.nextScanAt && ` ${msg("agentScans.next", { when: new Date(target.nextScanAt).toLocaleString() })}`}
+          {target.nextScanAt && ` ${msg("agentScans.next", { when: new Date(target.nextScanAt).toLocaleString(viewerLocale()) })}`}
         </p>
         {error && <span className="text-xs text-danger">{error}</span>}
         <DataTable
@@ -1397,6 +1397,7 @@ export function App() {
   const installBrand = useInstallBrand();
   const [theme] = useThemePreference();
   const [locale] = useLocalePreference();
+  setViewerLocale(locale);
   return (
     // The install's brand from config/brand.env (ADR 0053); OpenAsy's own look where it sets none.
     <BrandProvider theme={theme} locale={locale} brand={{ name: "OpenAsy", organization: undefined, ...installBrand }} className="min-h-screen">
