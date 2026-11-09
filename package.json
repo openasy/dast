@@ -1,6 +1,6 @@
 {
   "name": "@openasy/dast",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "OpenAsy DAST: findings from scans of running applications, on targets whose owner has proven they own them.",
   "license": "AGPL-3.0-only",

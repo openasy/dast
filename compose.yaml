@@ -9,7 +9,7 @@
 #   docker compose logs dast | grep 'no owner yet'   # the one-time link that creates the owner account
 services:
   dast:
-    image: ghcr.io/openasy/dast:0.8.0
+    image: ghcr.io/openasy/dast:0.9.0
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
@@ -36,7 +36,7 @@ services:
       # OPENASY_OIDC_CLIENT_SECRET: ${OPENASY_OIDC_CLIENT_SECRET}
 
   dast-agent:
-    image: ghcr.io/openasy/dast-agent:0.8.0 # always the same version as dast
+    image: ghcr.io/openasy/dast-agent:0.9.0 # always the same version as dast
     restart: unless-stopped
     read_only: true
     cap_drop: [ALL]
